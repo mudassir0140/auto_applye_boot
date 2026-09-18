@@ -24,12 +24,33 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchStats() {
       try {
-        const response = await fetch('/api/dashboard/stats')
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+
+        const response = await fetch('/api/dashboard/stats', {
+          signal: controller.signal,
+        })
+
+        clearTimeout(timeoutId)
+
         if (!response.ok) throw new Error('Failed to fetch stats')
         const data = await response.json()
         setStats(data.stats)
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error')
+        const errorMsg = err instanceof Error ? err.message : 'Unknown error'
+        setError(errorMsg)
+        // Set empty stats to show something instead of loading forever
+        setStats({
+          totalJobs: 0,
+          appliedJobs: 0,
+          interviews: 0,
+          assessments: 0,
+          rejections: 0,
+          offers: 0,
+          savedJobs: 0,
+          unreadNotifications: 0,
+          gmailConnected: false,
+        })
       } finally {
         setLoading(false)
       }
@@ -41,11 +62,14 @@ export default function Dashboard() {
   }, [session])
 
   if (loading) {
-    return <div className="p-8">Loading...</div>
-  }
-
-  if (error) {
-    return <div className="p-8 text-red-600">Error: {error}</div>
+    return (
+      <div className="p-8 flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading dashboard...</p>
+        </div>
+      </div>
+    )
   }
 
   if (!stats) {
@@ -55,6 +79,13 @@ export default function Dashboard() {
   return (
     <div className="p-8">
       <h1 className="text-3xl font-bold text-gray-900 mb-8">Dashboard</h1>
+
+      {error && (
+        <div className="mb-8 bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+          <p className="text-yellow-800"><strong>Warning:</strong> {error}</p>
+          <p className="text-yellow-700 text-sm mt-1">Dashboard is showing default values.</p>
+        </div>
+      )}
 
       {/* Gmail Status */}
       <div className="mb-8 p-6 bg-white rounded-lg shadow">
