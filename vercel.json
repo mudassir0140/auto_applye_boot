@@ -1,0 +1,26 @@
+{
+  "buildCommand": "npm run prisma:generate && npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "outputDirectory": ".next",
+  "framework": "nextjs",
+  "env": {
+    "NEXTAUTH_SECRET": {
+      "description": "NextAuth secret key for encryption"
+    },
+    "NEXTAUTH_URL": {
+      "description": "Production URL for NextAuth callbacks"
+    },
+    "GOOGLE_CLIENT_ID": {
+      "description": "Google OAuth Client ID"
+    },
+    "GOOGLE_CLIENT_SECRET": {
+      "description": "Google OAuth Client Secret",
+      "sensitive": true
+    },
+    "DATABASE_URL": {
+      "description": "Database URL (SQLite or PostgreSQL)",
+      "sensitive": true
+    }
+  }
+}

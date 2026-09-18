@@ -1,0 +1,46 @@
+{
+  "name": "boot_auto_play",
+  "version": "1.0.0",
+  "description": "Job Application AI Agent - Automate your job search and applications",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio"
+  },
+  "keywords": [
+    "job",
+    "application",
+    "ai",
+    "automation"
+  ],
+  "author": "Job Application AI Agent",
+  "license": "MIT",
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "next": "^15.0.0",
+    "next-auth": "^5.0.0-beta.20",
+    "@next-auth/prisma-adapter": "^1.2.0",
+    "prisma": "^6.0.0",
+    "@prisma/client": "^6.0.0",
+    "axios": "^1.7.0",
+    "googleapis": "^144.0.0",
+    "zod": "^3.23.0",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "eslint": "^8.55.0",
+    "eslint-config-next": "^15.0.0"
+  }
+}
