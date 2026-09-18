@@ -119,10 +119,10 @@ export async function canAutoApply(jobUrl: string): Promise<{
 
   try {
     const response = await axios.head(jobUrl, { timeout: 5000 })
-    const contentType = response.headers['content-type']
+    const contentType = String(response.headers['content-type'] || '')
 
     for (const platform of supportedPlatforms) {
-      if (jobUrl.includes(platform) || contentType?.includes(platform)) {
+      if (jobUrl.includes(platform) || contentType.includes(platform)) {
         return { canApply: true }
       }
     }

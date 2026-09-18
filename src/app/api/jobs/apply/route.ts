@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth/next'
-import { authOptions } from '@/app/api/auth/[...nextauth]/route'
+import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canAutoApply } from '@/lib/jobs'
 
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
     // Update job as applied
     await prisma.job.update({
       where: { id: jobId },
-      data: { applied: true, appliedAt: new Date() },
+      data: { applied: true },
     })
 
     // Create notification
