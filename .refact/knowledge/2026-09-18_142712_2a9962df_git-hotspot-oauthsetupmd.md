@@ -14,6 +14,8 @@ source_tool: "buddy_memory_lifecycle:git"
 source_confidence: 0.740
 source_commit: "25036ac47757"
 source_content_hash: "7f7c9f26aefca05f5ce86c75c997e9b52d4df79f8a2f6f7310b99a65dba335b7"
+occurrences: 2
+last_observed: "2026-09-18T10:18:14.268903500+00:00"
 ---
 
 Git hotspot: OAUTH_SETUP.md
