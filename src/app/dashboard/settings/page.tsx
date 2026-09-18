@@ -47,21 +47,21 @@ export default function SettingsPage() {
   async function handleConnectGmail() {
     setGmailConnecting(true)
     try {
-      await signIn('google', { redirect: false })
-      // Refresh settings after connecting
-      setTimeout(() => {
-        window.location.reload()
-      }, 1000)
+      // Redirect to OAuth sign-in flow
+      // This will authenticate with Google and link the account
+      await signIn('google', {
+        callbackUrl: '/dashboard/settings',
+        redirect: true,
+      })
     } catch (error) {
       console.error('Gmail connection error:', error)
       alert('Failed to connect Gmail')
-    } finally {
       setGmailConnecting(false)
     }
   }
 
   async function handleDisconnectGmail() {
-    if (!confirm('Are you sure you want to disconnect Gmail?')) return
+    if (!confirm('Are you sure you want to disconnect Gmail? You can reconnect with a different account anytime.')) return
 
     setGmailDisconnecting(true)
     try {
@@ -71,10 +71,11 @@ export default function SettingsPage() {
 
       if (!response.ok) throw new Error('Failed to disconnect')
 
+      // Refresh settings after disconnecting
       if (settings) {
         setSettings({ ...settings, gmailConnected: false })
       }
-      alert('Gmail disconnected successfully')
+      alert('Gmail disconnected successfully. You can connect a different account anytime.')
     } catch (error) {
       console.error('Disconnect error:', error)
       alert('Failed to disconnect Gmail')

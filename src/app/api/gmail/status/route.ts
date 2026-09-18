@@ -68,7 +68,8 @@ export async function DELETE(req: NextRequest) {
       )
     }
 
-    // Delete Gmail OAuth connection
+    // Delete Gmail OAuth connection ONLY
+    // Do NOT delete sessions - user should stay logged in
     await prisma.account.deleteMany({
       where: {
         userId: user.id,
@@ -76,16 +77,9 @@ export async function DELETE(req: NextRequest) {
       },
     })
 
-    // Delete associated sessions
-    await prisma.session.deleteMany({
-      where: {
-        userId: user.id,
-      },
-    })
-
     return NextResponse.json({
       success: true,
-      message: 'Gmail disconnected',
+      message: 'Gmail disconnected successfully',
     })
   } catch (error) {
     console.error('Disconnect error:', error)
