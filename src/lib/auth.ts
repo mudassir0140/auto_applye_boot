@@ -13,6 +13,23 @@ const baseUrl = getBaseUrl()
 const clientId = process.env.GOOGLE_CLIENT_ID
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET
 const secret = process.env.NEXTAUTH_SECRET
+
+// Validate NEXTAUTH_SECRET is set and is a string
+if (!secret) {
+  const errorMsg = 'NEXTAUTH_SECRET environment variable is not set or is empty'
+  const instructions = process.env.NODE_ENV === 'production'
+    ? 'Set NEXTAUTH_SECRET in your Vercel project environment variables'
+    : 'Set NEXTAUTH_SECRET in .env.local'
+
+  const fullError = `NextAuth Configuration Error: ${errorMsg}. ${instructions}`
+
+  throw new Error(fullError)
+}
+
+if (typeof secret !== 'string') {
+  throw new Error(`NextAuth Configuration Error: NEXTAUTH_SECRET must be a string, received ${typeof secret}`)
+}
+
 const callbackUrl = `${baseUrl}/api/auth/callback/google`
 
 // Log configuration with debugging info (but not secrets)
