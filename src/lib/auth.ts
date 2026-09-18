@@ -9,12 +9,36 @@ function getBaseUrl() {
   return 'http://localhost:3000'
 }
 
+const baseUrl = getBaseUrl()
+const clientId = process.env.GOOGLE_CLIENT_ID
+const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+const secret = process.env.NEXTAUTH_SECRET
+
+// Log configuration issues in development (but not secrets)
+if (process.env.NODE_ENV === 'development') {
+  const issues: string[] = []
+  if (!clientId || clientId === 'your-google-client-id-here') {
+    issues.push('GOOGLE_CLIENT_ID is not configured (still using placeholder)')
+  }
+  if (!clientSecret || clientSecret === 'your-google-client-secret-here') {
+    issues.push('GOOGLE_CLIENT_SECRET is not configured (still using placeholder)')
+  }
+  if (!secret) {
+    issues.push('NEXTAUTH_SECRET is not set')
+  }
+  if (issues.length > 0) {
+    console.warn('⚠️  OAuth Configuration Issues:')
+    issues.forEach(issue => console.warn(`  - ${issue}`))
+    console.warn('See GOOGLE_OAUTH_SETUP.md or INVALID_CLIENT_TROUBLESHOOTING.md for help')
+  }
+}
+
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID || '',
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+      clientId: clientId || '',
+      clientSecret: clientSecret || '',
       allowDangerousEmailAccountLinking: false,
       authorization: {
         params: {
@@ -52,5 +76,5 @@ export const authOptions: NextAuthOptions = {
     strategy: 'database',
     maxAge: 30 * 24 * 60 * 60,
   },
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: secret,
 }
