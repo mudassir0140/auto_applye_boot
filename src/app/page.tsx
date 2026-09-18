@@ -38,13 +38,6 @@ export default function Home() {
             >
               Sign in with Google
             </button>
-
-            <p className="text-gray-600">
-              New here?{' '}
-              <Link href="/auth/signup" className="text-blue-600 hover:underline">
-                Create an account
-              </Link>
-            </p>
           </div>
 
           <div className="mt-16 grid md:grid-cols-3 gap-8 max-w-4xl mx-auto">
