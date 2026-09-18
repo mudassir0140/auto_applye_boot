@@ -9,7 +9,7 @@
       "description": "NextAuth secret key for encryption"
     },
     "NEXTAUTH_URL": {
-      "description": "Production URL for NextAuth callbacks"
+      "description": "Production URL for NextAuth callbacks (e.g., https://yourdomain.vercel.app)"
     },
     "GOOGLE_CLIENT_ID": {
       "description": "Google OAuth Client ID"
