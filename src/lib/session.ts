@@ -1,0 +1,38 @@
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth/next'
+import { authOptions } from './auth'
+import { prisma } from './prisma'
+
+const OBJECT_ID = /^[a-f\d]{24}$/i
+
+export function isObjectId(value: unknown): value is string {
+  return typeof value === 'string' && OBJECT_ID.test(value)
+}
+
+/**
+ * Resolve the signed-in user from the session cookie and confirm the user still
+ * exists in the database. Every API route derives `userId` from here — never
+ * from the request body or query string — so records stay isolated per user.
+ */
+export async function getCurrentUser() {
+  const session = await getServerSession(authOptions)
+  const id = (session?.user as { id?: string } | undefined)?.id
+  if (!isObjectId(id)) return null
+  return prisma.user.findUnique({ where: { id } })
+}
+
+export type CurrentUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>
+
+export function unauthorized() {
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+}
+
+export function parseJsonList(value: string | null | undefined): string[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}

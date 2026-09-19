@@ -2,12 +2,17 @@
 
 import { useSession, signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 export default function Home() {
   const { data: session, status } = useSession()
   const router = useRouter()
+  const [authError, setAuthError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setAuthError(new URLSearchParams(window.location.search).get('error'))
+  }, [])
 
   useEffect(() => {
     if (status === 'authenticated') {
@@ -31,6 +36,12 @@ export default function Home() {
             apply automatically, and track your progress all in one place.
           </p>
 
+          {authError && (
+            <p className="mb-4 text-red-600" role="alert">
+              Google sign-in did not complete ({authError}). Please try again.
+            </p>
+          )}
+
           <div className="space-y-4">
             <button
               onClick={() => signIn('google', { callbackUrl: '/dashboard', redirect: true })}
@@ -44,13 +55,13 @@ export default function Home() {
             <div className="bg-white p-6 rounded-lg shadow">
               <h3 className="text-lg font-semibold mb-2">🔍 Find Jobs</h3>
               <p className="text-gray-600">
-                Discover relevant positions from LinkedIn, Google Jobs, and more.
+                Discover real openings from public job boards that match your CV.
               </p>
             </div>
             <div className="bg-white p-6 rounded-lg shadow">
               <h3 className="text-lg font-semibold mb-2">🤖 Apply Automatically</h3>
               <p className="text-gray-600">
-                Apply to suitable jobs automatically using your CV and portfolio.
+                Send applications from your own Gmail with your CV attached.
               </p>
             </div>
             <div className="bg-white p-6 rounded-lg shadow">

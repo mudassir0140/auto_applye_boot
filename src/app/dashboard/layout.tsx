@@ -43,6 +43,7 @@ export default function DashboardLayout({
 
   const navItems = [
     { href: '/dashboard', icon: '📊', label: 'Dashboard' },
+    { href: '/dashboard/profile', icon: '👤', label: 'Profile' },
     { href: '/dashboard/jobs', icon: '💼', label: 'Jobs' },
     { href: '/dashboard/applications', icon: '📋', label: 'Applications' },
     { href: '/dashboard/emails', icon: '📧', label: 'Emails' },

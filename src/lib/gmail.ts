@@ -1,118 +1,164 @@
 import { google } from 'googleapis'
-import { Session } from 'next-auth'
 import { prisma } from './prisma'
 
-export async function getGmailClient(userId: string) {
-  const account = await prisma.account.findFirst({
-    where: {
-      user: { id: userId },
-      provider: 'google',
-    },
-  })
-
-  if (!account?.access_token) {
-    throw new Error('Gmail not connected or access token expired')
+export class GmailNotConnectedError extends Error {
+  constructor(message = 'Gmail is not connected. Sign in with Google again to reconnect.') {
+    super(message)
+    this.name = 'GmailNotConnectedError'
   }
+}
+
+export async function getGoogleAccount(userId: string) {
+  return prisma.account.findFirst({ where: { userId, provider: 'google' } })
+}
+
+export function isGmailConnected(account: { access_token: string | null; refresh_token: string | null; disconnectedAt: Date | null } | null | undefined) {
+  return !!account && !account.disconnectedAt && !!(account.access_token || account.refresh_token)
+}
+
+/**
+ * Gmail client for one user, authenticated with THAT user's stored OAuth tokens.
+ * Tokens stay server-side; an expired access token is refreshed with the stored
+ * refresh token and the new one is written back to MongoDB.
+ */
+export async function getGmailClient(userId: string) {
+  const account = await getGoogleAccount(userId)
+  if (!account || !isGmailConnected(account)) throw new GmailNotConnectedError()
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    `${process.env.NEXTAUTH_URL}/api/auth/callback/google`
+    process.env.GOOGLE_CLIENT_SECRET
   )
 
   oauth2Client.setCredentials({
-    access_token: account.access_token,
-    refresh_token: account.refresh_token,
+    access_token: account.access_token ?? undefined,
+    refresh_token: account.refresh_token ?? undefined,
+    expiry_date: account.expires_at ? account.expires_at * 1000 : undefined,
   })
 
-  return google.gmail({ version: 'v1', auth: oauth2Client })
+  oauth2Client.on('tokens', (tokens) => {
+    prisma.account
+      .update({
+        where: { id: account.id },
+        data: {
+          ...(tokens.access_token ? { access_token: tokens.access_token } : {}),
+          ...(tokens.expiry_date ? { expires_at: Math.floor(tokens.expiry_date / 1000) } : {}),
+          ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
+        },
+      })
+      .catch((err) => console.error('[gmail] failed to persist refreshed token:', err))
+  })
+
+  return { gmail: google.gmail({ version: 'v1', auth: oauth2Client }), oauth2Client, account }
 }
 
-export async function fetchJobRelatedEmails(userId: string) {
+/** Force a token refresh now if the access token is expired/expiring. */
+export async function ensureFreshToken(userId: string): Promise<{ refreshed: boolean }> {
+  const { oauth2Client, account } = await getGmailClient(userId)
+  const expiresAt = (account.expires_at ?? 0) * 1000
+  if (account.access_token && expiresAt - Date.now() > 5 * 60 * 1000) return { refreshed: false }
   try {
-    const gmail = await getGmailClient(userId)
+    const { credentials } = await oauth2Client.refreshAccessToken()
+    await prisma.account.update({
+      where: { id: account.id },
+      data: {
+        access_token: credentials.access_token ?? null,
+        expires_at: credentials.expiry_date ? Math.floor(credentials.expiry_date / 1000) : null,
+        ...(credentials.refresh_token ? { refresh_token: credentials.refresh_token } : {}),
+      },
+    })
+    return { refreshed: true }
+  } catch (error) {
+    await handleGoogleAuthFailure(userId, error)
+    throw error
+  }
+}
 
-    const response = await gmail.users.messages.list({
+/** Google revoked the grant / refresh token is dead → mark disconnected so the UI asks to re-login. */
+export async function handleGoogleAuthFailure(userId: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/invalid_grant|invalid_client|unauthorized_client|Token has been expired or revoked/i.test(message)) {
+    await prisma.account.updateMany({
+      where: { userId, provider: 'google' },
+      data: { access_token: null, refresh_token: null, expires_at: null, disconnectedAt: new Date() },
+    })
+  }
+}
+
+export interface FetchedEmail {
+  gmailMessageId: string
+  gmailThreadId: string | null
+  from: string
+  subject: string
+  body: string
+  receivedAt: Date
+}
+
+/** Recent inbox messages (not sent by the user) that look job-related. */
+export async function fetchJobRelatedEmails(userId: string, days = 30): Promise<FetchedEmail[]> {
+  const { gmail } = await getGmailClient(userId)
+  try {
+    const list = await gmail.users.messages.list({
       userId: 'me',
-      q: 'subject:(job OR position OR apply OR interview OR assessment OR reject OR offer) is:unread',
-      maxResults: 20,
+      q: `in:inbox -from:me newer_than:${days}d (interview OR assessment OR application OR applied OR candidate OR position OR role OR offer OR unfortunately OR "your application" OR recruiter OR hiring)`,
+      maxResults: 50,
     })
 
-    const messages = response.data.messages || []
-    const jobEmails = []
-
-    for (const message of messages) {
+    const emails: FetchedEmail[] = []
+    for (const message of list.data.messages || []) {
       if (!message.id) continue
-
-      const msg = await gmail.users.messages.get({
-        userId: 'me',
-        id: message.id,
-        format: 'full',
-      })
-
+      const msg = await gmail.users.messages.get({ userId: 'me', id: message.id, format: 'full' })
       const headers = msg.data.payload?.headers || []
-      const from = headers.find(h => h.name === 'From')?.value || ''
-      const subject = headers.find(h => h.name === 'Subject')?.value || ''
-      const date = headers.find(h => h.name === 'Date')?.value || new Date().toISOString()
-
-      const body = extractEmailBody(msg.data.payload)
-
-      jobEmails.push({
+      const header = (name: string) => headers.find((h) => h.name?.toLowerCase() === name)?.value || ''
+      const dateHeader = header('date')
+      const received = msg.data.internalDate
+        ? new Date(Number(msg.data.internalDate))
+        : dateHeader
+          ? new Date(dateHeader)
+          : new Date()
+      emails.push({
         gmailMessageId: message.id,
-        from,
-        subject,
-        body,
-        receivedAt: new Date(date),
+        gmailThreadId: msg.data.threadId || null,
+        from: header('from'),
+        subject: header('subject'),
+        body: extractEmailBody(msg.data.payload).slice(0, 20000),
+        receivedAt: isNaN(received.getTime()) ? new Date() : received,
       })
     }
-
-    return jobEmails
+    return emails
   } catch (error) {
-    console.error('Error fetching Gmail emails:', error)
-    return []
+    await handleGoogleAuthFailure(userId, error)
+    throw error
   }
+}
+
+function decode(data: string) {
+  return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8')
 }
 
 function extractEmailBody(payload: any): string {
-  if (payload.parts) {
-    for (const part of payload.parts) {
-      if (part.mimeType === 'text/plain') {
-        const data = part.body?.data
-        if (data) {
-          return Buffer.from(data, 'base64').toString('utf-8')
-        }
-      }
-    }
+  if (!payload) return ''
+  if (payload.mimeType === 'text/plain' && payload.body?.data) return decode(payload.body.data)
+  for (const part of payload.parts || []) {
+    const found = extractEmailBody(part)
+    if (found) return found
   }
-
   if (payload.body?.data) {
-    return Buffer.from(payload.body.data, 'base64').toString('utf-8')
+    const text = decode(payload.body.data)
+    return payload.mimeType === 'text/html' ? text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ') : text
   }
-
   return ''
 }
 
 export function classifyJobEmail(subject: string, body: string): string {
-  const lowerSubject = subject.toLowerCase()
-  const lowerBody = body.toLowerCase()
-  const content = `${lowerSubject} ${lowerBody}`
+  const content = `${subject} ${body}`.toLowerCase()
+  const has = (re: RegExp) => re.test(content)
 
-  if (content.includes('interview') || content.includes('schedule')) {
-    return 'interview'
-  }
-  if (content.includes('assessment') || content.includes('test')) {
-    return 'assessment'
-  }
-  if (content.includes('reject') || content.includes('rejected') || content.includes('unfortunately')) {
-    return 'rejection'
-  }
-  if (content.includes('offer') || content.includes('congratul')) {
-    return 'offer'
-  }
-  if (content.includes('applied') || content.includes('received')) {
-    return 'confirmation'
-  }
-
+  if (has(/\b(unfortunately|not (be )?moving forward|not selected|regret to inform|other candidates|decided not to (proceed|move)|rejected)\b/)) return 'rejection'
+  if (has(/\b(job offer|offer letter|pleased to offer|offer of employment|extend (you )?an offer)\b/)) return 'offer'
+  if (has(/\b(interview|schedule a (call|chat|meeting)|phone screen|video call)\b/)) return 'interview'
+  if (has(/\b(assessment|coding (test|challenge)|take-home|technical test|hackerrank|codility|skills test)\b/)) return 'assessment'
+  if (has(/\b(thank you for applying|we('| ha)ve received your application|application (has been )?received|successfully (applied|submitted))\b/)) return 'confirmation'
   return 'other'
 }
 
@@ -121,152 +167,112 @@ export interface EmailContent {
   subject: string
   bodyPlain: string
   bodyHtml?: string
+  attachment?: { fileName: string; contentType: string; data: Buffer }
 }
 
+function encodeHeader(value: string) {
+  return /^[\x20-\x7e]*$/.test(value) ? value : `=?UTF-8?B?${Buffer.from(value, 'utf-8').toString('base64')}?=`
+}
+
+function wrap76(b64: string) {
+  return b64.replace(/(.{76})/g, '$1\r\n')
+}
+
+function buildMime(from: string, email: EmailContent): string {
+  const boundary = `boot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+  const altBoundary = `${boundary}_alt`
+  const headers = [
+    `From: ${from}`,
+    `To: ${email.to}`,
+    `Subject: ${encodeHeader(email.subject)}`,
+    'MIME-Version: 1.0',
+  ]
+  const bodyPart = (ctype: string, content: string) =>
+    `Content-Type: ${ctype}; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${wrap76(Buffer.from(content, 'utf-8').toString('base64'))}`
+
+  const alternative = email.bodyHtml
+    ? `Content-Type: multipart/alternative; boundary="${altBoundary}"\r\n\r\n` +
+      `--${altBoundary}\r\n${bodyPart('text/plain', email.bodyPlain)}\r\n` +
+      `--${altBoundary}\r\n${bodyPart('text/html', email.bodyHtml)}\r\n` +
+      `--${altBoundary}--`
+    : bodyPart('text/plain', email.bodyPlain)
+
+  if (!email.attachment) {
+    return `${headers.join('\r\n')}\r\n${alternative}`
+  }
+
+  const { fileName, contentType, data } = email.attachment
+  const safeName = fileName.replace(/["\r\n]/g, '')
+  return (
+    `${headers.join('\r\n')}\r\nContent-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
+    `--${boundary}\r\n${alternative}\r\n` +
+    `--${boundary}\r\nContent-Type: ${contentType}; name="${safeName}"\r\n` +
+    `Content-Disposition: attachment; filename="${safeName}"\r\nContent-Transfer-Encoding: base64\r\n\r\n` +
+    `${wrap76(data.toString('base64'))}\r\n--${boundary}--`
+  )
+}
+
+/** Sends through the user's own Gmail; the message appears in their Sent folder. */
 export async function sendApplicationEmail(
   userId: string,
-  email: EmailContent
-): Promise<{ messageId: string }> {
+  email: EmailContent,
+  fromName?: string | null
+): Promise<{ messageId: string; threadId: string | null; from: string }> {
+  const { gmail } = await getGmailClient(userId)
   try {
-    const gmail = await getGmailClient(userId)
+    const profile = await gmail.users.getProfile({ userId: 'me' })
+    const address = profile.data.emailAddress || ''
+    const from = fromName ? `${encodeHeader(fromName)} <${address}>` : address
+    const raw = Buffer.from(buildMime(from, email))
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')
 
-    const emailLines = [
-      `To: ${email.to}`,
-      `Subject: ${email.subject}`,
-      'Content-Type: text/html; charset="UTF-8"',
-      'MIME-Version: 1.0',
-      '',
-      email.bodyHtml || email.bodyPlain,
-    ]
-
-    const message = emailLines.join('\n')
-    const encodedMessage = Buffer.from(message).toString('base64').replace(/\+/g, '-').replace(/\//g, '_')
-
-    const response = await gmail.users.messages.send({
-      userId: 'me',
-      requestBody: {
-        raw: encodedMessage,
-      },
-    })
-
-    return {
-      messageId: response.data.id || '',
-    }
+    const response = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } })
+    return { messageId: response.data.id || '', threadId: response.data.threadId || null, from: address }
   } catch (error) {
-    console.error('Error sending application email:', error)
+    await handleGoogleAuthFailure(userId, error)
     throw new Error(`Failed to send email: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }
 
-export async function getAccountEmail(userId: string): Promise<string> {
-  try {
-    const account = await prisma.account.findFirst({
-      where: {
-        user: { id: userId },
-        provider: 'google',
-      },
-    })
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-    if (!account?.access_token) {
-      throw new Error('Gmail not connected')
-    }
-
-    const gmail = await getGmailClient(userId)
-    const profile = await gmail.users.getProfile({
-      userId: 'me',
-    })
-
-    return profile.data.emailAddress || ''
-  } catch (error) {
-    console.error('Error getting account email:', error)
-    throw error
-  }
-}
-
-export function generateApplicationEmail(
-  jobTitle: string,
-  company: string,
-  recruiterName: string | null,
-  userEmail: string,
-  userName: string,
-  cvUrl: string | null,
+export function generateApplicationEmail(opts: {
+  jobTitle: string
+  company: string
+  userName: string
+  userEmail: string
+  skills: string[]
+  cvUrl: string | null
   portfolioUrl: string | null
-): EmailContent {
-  const greeting = recruiterName ? `Dear ${recruiterName}` : 'Dear Hiring Team'
+  hasAttachment: boolean
+}): EmailContent {
+  const { jobTitle, company, userName, userEmail, skills, cvUrl, portfolioUrl, hasAttachment } = opts
+  const skillLine = skills.length ? `My core skills include ${skills.slice(0, 8).join(', ')}.` : ''
 
-  const portfolioLine = portfolioUrl ? `\nPortfolio: ${portfolioUrl}` : ''
-  const cvLine = cvUrl ? `\nCV/Resume: ${cvUrl}` : ''
+  const lines = [
+    'Dear Hiring Team,',
+    '',
+    `I am writing to apply for the ${jobTitle} position at ${company}. ${skillLine}`.trim(),
+    '',
+    hasAttachment ? 'My CV is attached to this email.' : '',
+    cvUrl ? `CV: ${cvUrl}` : '',
+    portfolioUrl ? `Portfolio: ${portfolioUrl}` : '',
+    '',
+    'Thank you for your time and consideration. I would welcome the chance to discuss the role.',
+    '',
+    'Best regards,',
+    userName,
+    userEmail,
+  ].filter((l, i, arr) => !(l === '' && arr[i - 1] === ''))
 
-  const bodyHtml = `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { margin-bottom: 20px; }
-    .greeting { font-size: 16px; margin-bottom: 15px; }
-    .body-text { margin-bottom: 15px; }
-    .signature { margin-top: 25px; padding-top: 15px; border-top: 1px solid #ddd; }
-    .links { margin-top: 20px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }
-    .link-item { margin: 10px 0; }
-    a { color: #0066cc; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <p class="greeting">${greeting},</p>
+  const bodyPlain = lines.join('\n')
+  const bodyHtml = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#222">${lines
+    .map((l) => (l ? `<p style="margin:0 0 8px">${escapeHtml(l)}</p>` : '<br>'))
+    .join('')}</div>`
 
-      <div class="body-text">
-        <p>I am writing to express my strong interest in the <strong>${jobTitle}</strong> position at <strong>${company}</strong>.</p>
-
-        <p>With my background and skills, I believe I can make a valuable contribution to your team. I am enthusiastic about the opportunity to bring my expertise to ${company} and would welcome the chance to discuss how I can contribute to your team's success.</p>
-
-        <p>Please find my application materials and information below:</p>
-      </div>
-
-      <div class="links">
-        <div class="link-item"><strong>Email:</strong> ${userEmail}</div>
-        ${cvLine ? `<div class="link-item"><strong>CV/Resume:</strong> <a href="${cvUrl}">${cvUrl}</a></div>` : ''}
-        ${portfolioLine ? `<div class="link-item"><strong>Portfolio:</strong> <a href="${portfolioUrl}">${portfolioUrl}</a></div>` : ''}
-      </div>
-
-      <p style="margin-top: 20px;">Thank you for considering my application. I look forward to the opportunity to discuss this position with you.</p>
-    </div>
-
-    <div class="signature">
-      <p>Best regards,<br><strong>${userName}</strong></p>
-    </div>
-  </div>
-</body>
-</html>
-  `.trim()
-
-  const bodyPlain = `
-${greeting},
-
-I am writing to express my strong interest in the ${jobTitle} position at ${company}.
-
-With my background and skills, I believe I can make a valuable contribution to your team. I am enthusiastic about the opportunity to bring my expertise to ${company} and would welcome the chance to discuss how I can contribute to your team's success.
-
-Please find my application materials and information below:
-
-Email: ${userEmail}
-${cvLine}
-${portfolioLine}
-
-Thank you for considering my application. I look forward to the opportunity to discuss this position with you.
-
-Best regards,
-${userName}
-  `.trim()
-
-  return {
-    to: '', // Will be set by caller
-    subject: `Application for ${jobTitle} position at ${company}`,
-    bodyPlain,
-    bodyHtml,
-  }
+  return { to: '', subject: `Application for ${jobTitle} – ${userName}`, bodyPlain, bodyHtml }
 }

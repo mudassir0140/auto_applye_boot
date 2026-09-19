@@ -1,141 +1,139 @@
 import axios from 'axios'
 
-interface JobSearchParams {
-  keywords: string[]
-  location?: string
-  experience?: string
-}
-
-interface Job {
+// Real job sources with free public JSON APIs (no scraping, no API keys).
+export interface FoundJob {
   title: string
   company: string
   location?: string
   description?: string
   url: string
+  applyEmail?: string
   source: string
   salary?: string
   jobType?: string
-  seniority?: string
+  tags?: string[]
 }
 
-export async function searchJobsFromRSS(
-  keywords: string[],
-  location?: string
-): Promise<Job[]> {
-  const jobs: Job[] = []
+const HTTP = { timeout: 15000, headers: { 'User-Agent': 'Boot-JobAgent/1.0 (+https://github.com/mudassir0140/auto_applye_boot)' } }
 
-  // LinkedIn Jobs RSS feed (if available)
-  try {
-    const linkedinJobs = await searchLinkedInJobs(keywords, location)
-    jobs.push(...linkedinJobs)
-  } catch (error) {
-    console.error('Error fetching LinkedIn jobs:', error)
-  }
-
-  // Google Jobs via public data
-  try {
-    const googleJobs = await searchGoogleJobs(keywords, location)
-    jobs.push(...googleJobs)
-  } catch (error) {
-    console.error('Error fetching Google jobs:', error)
-  }
-
-  return jobs
+export function stripHtml(html: string): string {
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>|<\/p>|<\/li>|<\/h\d>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x?[0-9a-f]+;/gi, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim()
 }
 
-async function searchLinkedInJobs(
-  keywords: string[],
-  location?: string
-): Promise<Job[]> {
-  const jobs: Job[] = []
+const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi
+const BAD_EMAIL = /^(no-?reply|donotreply|do-not-reply|privacy|abuse|support-noreply)@|@(example|sentry|domain|email)\./i
 
-  // LinkedIn requires API access, for now we'll create job search URLs
-  // In production, use official LinkedIn jobs API or scraping library
-  for (const keyword of keywords) {
-    const searchUrl = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(keyword)}${
-      location ? `&location=${encodeURIComponent(location)}` : ''
-    }`
-
-    // Store the URL for manual browsing
-    jobs.push({
-      title: `LinkedIn Job Search: ${keyword}`,
-      company: 'LinkedIn',
-      url: searchUrl,
-      source: 'linkedin',
-      description: `Search for ${keyword} positions on LinkedIn${location ? ` in ${location}` : ''}`,
-    })
-  }
-
-  return jobs
+/** A real recruiter/apply address from the posting text, or undefined. */
+export function extractApplyEmail(text: string): string | undefined {
+  const matches = text.match(EMAIL_RE) || []
+  return matches.find((m) => !BAD_EMAIL.test(m))?.toLowerCase()
 }
 
-async function searchGoogleJobs(
-  keywords: string[],
-  location?: string
-): Promise<Job[]> {
-  const jobs: Job[] = []
-
-  for (const keyword of keywords) {
-    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(keyword)}+jobs${
-      location ? `+${encodeURIComponent(location)}` : ''
-    }`
-
-    jobs.push({
-      title: `Google Jobs Search: ${keyword}`,
-      company: 'Google Jobs',
-      url: searchUrl,
-      source: 'google',
-      description: `Search for ${keyword} positions on Google Jobs${location ? ` in ${location}` : ''}`,
-    })
-  }
-
-  return jobs
-}
-
-export function calculateJobMatchScore(
-  jobDescription: string,
-  userSkills: string[]
-): number {
-  if (!jobDescription || userSkills.length === 0) return 50
-
-  const lowerDesc = jobDescription.toLowerCase()
-  let matchedSkills = 0
-
-  for (const skill of userSkills) {
-    if (lowerDesc.includes(skill.toLowerCase())) {
-      matchedSkills++
+async function fromRemotive(keyword: string): Promise<FoundJob[]> {
+  const { data } = await axios.get('https://remotive.com/api/remote-jobs', { ...HTTP, params: { search: keyword, limit: 30 } })
+  return (data.jobs || []).map((j: any): FoundJob => {
+    const description = stripHtml(j.description || '')
+    return {
+      title: j.title,
+      company: j.company_name,
+      location: j.candidate_required_location || 'Remote',
+      description: description.slice(0, 6000),
+      url: j.url,
+      applyEmail: extractApplyEmail(description),
+      source: 'remotive',
+      salary: j.salary || undefined,
+      jobType: j.job_type || undefined,
+      tags: j.tags || [],
     }
-  }
-
-  return Math.min(100, Math.round((matchedSkills / userSkills.length) * 100))
+  })
 }
 
-export async function canAutoApply(jobUrl: string): Promise<{
-  canApply: boolean
-  reason?: string
-}> {
-  // Check if the job platform supports automation
-  const supportedPlatforms = ['greenhouse.io', 'lever.co', 'workable.com']
+async function fromArbeitnow(keyword: string): Promise<FoundJob[]> {
+  const { data } = await axios.get('https://www.arbeitnow.com/api/job-board-api', HTTP)
+  const kw = keyword.toLowerCase()
+  return (data.data || [])
+    .filter((j: any) => `${j.title} ${(j.tags || []).join(' ')} ${j.description || ''}`.toLowerCase().includes(kw))
+    .map((j: any): FoundJob => {
+      const description = stripHtml(j.description || '')
+      return {
+        title: j.title,
+        company: j.company_name,
+        location: j.remote ? `Remote${j.location ? ` (${j.location})` : ''}` : j.location,
+        description: description.slice(0, 6000),
+        url: j.url,
+        applyEmail: extractApplyEmail(description),
+        source: 'arbeitnow',
+        jobType: (j.job_types || []).join(', ') || undefined,
+        tags: j.tags || [],
+      }
+    })
+}
 
-  try {
-    const response = await axios.head(jobUrl, { timeout: 5000 })
-    const contentType = String(response.headers['content-type'] || '')
+async function fromRemoteOk(keyword: string): Promise<FoundJob[]> {
+  const { data } = await axios.get('https://remoteok.com/api', HTTP)
+  const kw = keyword.toLowerCase()
+  return (Array.isArray(data) ? data : [])
+    .filter((j: any) => j.position && j.url && `${j.position} ${(j.tags || []).join(' ')}`.toLowerCase().includes(kw))
+    .map((j: any): FoundJob => {
+      const description = stripHtml(j.description || '')
+      return {
+        title: j.position,
+        company: j.company,
+        location: j.location || 'Remote',
+        description: description.slice(0, 6000),
+        url: j.url,
+        applyEmail: extractApplyEmail(description),
+        source: 'remoteok',
+        salary: j.salary_min ? `$${j.salary_min}–$${j.salary_max}` : undefined,
+        tags: j.tags || [],
+      }
+    })
+}
 
-    for (const platform of supportedPlatforms) {
-      if (jobUrl.includes(platform) || contentType.includes(platform)) {
-        return { canApply: true }
+export async function searchJobs(keywords: string[], location?: string): Promise<FoundJob[]> {
+  const out = new Map<string, FoundJob>()
+  const loc = location?.toLowerCase().trim()
+
+  for (const keyword of keywords.slice(0, 5)) {
+    const results = await Promise.allSettled([fromRemotive(keyword), fromArbeitnow(keyword), fromRemoteOk(keyword)])
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        console.error('[jobs] source failed:', r.reason?.message || r.reason)
+        continue
+      }
+      for (const job of r.value) {
+        if (!job.title || !job.company || !job.url) continue
+        if (loc && loc !== 'remote' && job.location && !job.location.toLowerCase().includes(loc) && !/remote|anywhere|worldwide/i.test(job.location)) continue
+        out.set(job.url, job)
       }
     }
-
-    // For most platforms, we'll need human approval
-    return {
-      canApply: false,
-      reason: 'Platform requires manual review. Show approval prompt.',
-    }
-  } catch (error) {
-    return {
-      canApply: false,
-      reason: 'Could not verify job URL. Please apply manually.',
-    }
   }
+  return Array.from(out.values())
+}
+
+/** 0–100: how many of the user's skills/keywords the posting mentions, plus title hits. */
+export function calculateJobMatchScore(job: Pick<FoundJob, 'title' | 'description' | 'tags'>, skills: string[], keywords: string[]): number {
+  const haystack = `${job.title} ${(job.tags || []).join(' ')} ${job.description || ''}`.toLowerCase()
+  const title = job.title.toLowerCase()
+  const terms = Array.from(new Set([...skills, ...keywords].map((s) => s.toLowerCase().trim()).filter(Boolean)))
+  if (terms.length === 0) return 0
+
+  const hit = (t: string) => new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(haystack)
+  const matched = terms.filter(hit).length
+  const titleHits = keywords.filter((k) => k && title.includes(k.toLowerCase())).length
+
+  const base = (matched / Math.min(terms.length, 8)) * 80
+  return Math.min(100, Math.round(base + Math.min(titleHits, 2) * 10))
 }

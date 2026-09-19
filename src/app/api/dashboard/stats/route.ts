@@ -1,35 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth/next'
-import { authOptions } from '@/lib/auth'
+import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { getCurrentUser, unauthorized, parseJsonList } from '@/lib/session'
+import { getGoogleAccount, isGmailConnected } from '@/lib/gmail'
 import { get24HourActivityStats, getApplicationHistory } from '@/lib/application-cooldown'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const session = await getServerSession(authOptions)
-
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-      include: {
-        accounts: true,
-      },
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
+    const user = await getCurrentUser()
+    if (!user) return unauthorized()
+    const googleAccount = await getGoogleAccount(user.id)
 
     // Get all stats
     const [
@@ -79,8 +60,7 @@ export async function GET(req: NextRequest) {
       getApplicationHistory(user.id, 10, 7), // Last 7 days
     ])
 
-    const gmailConnected = user.accounts.some(a => a.provider === 'google' && a.access_token)
-    const gmailEmail = user.accounts.find(a => a.provider === 'google')?.id ? session.user.email : null
+    const gmailConnected = isGmailConnected(googleAccount)
 
     return NextResponse.json({
       stats: {
@@ -112,9 +92,12 @@ export async function GET(req: NextRequest) {
         name: user.name,
         cvUrl: user.cvUrl,
         portfolioUrl: user.portfolioUrl,
-        gmailEmail: gmailConnected ? session.user.email : null,
-        skills: user.skills ? JSON.parse(user.skills) : [],
-        preferredRoles: user.preferredRoles ? JSON.parse(user.preferredRoles) : [],
+        gmailEmail: gmailConnected ? user.email : null,
+        image: user.image,
+        preferencesConfirmed: !!user.preferencesConfirmedAt,
+        needsGmailReconnect: !!googleAccount && !gmailConnected,
+        skills: parseJsonList(user.skills),
+        preferredRoles: parseJsonList(user.preferredRoles),
       },
     })
   } catch (error) {

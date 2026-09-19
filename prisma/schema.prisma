@@ -1,47 +1,79 @@
+// MongoDB Atlas is the single source of truth. Every user-owned record carries
+// a `userId` and every query in src/ filters on it.
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mongodb"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id                  String    @id @default(cuid())
+  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
   email               String    @unique
   name                String?
   image               String?
+  emailVerified       DateTime?
+
+  // Resume / portfolio
   cvUrl               String?
   portfolioUrl        String?
+  resumeText          String?   // text extracted from the uploaded CV
 
-  // Parsed profile data from resume/portfolio
-  skills              String?   // JSON array of extracted skills
-  experience          String?   // JSON array of work experience
-  education           String?   // JSON array of education
-  projects            String?   // JSON array of projects
-  preferredRoles      String?   // JSON array of preferred job roles
+  // Parsed profile data (JSON-encoded arrays)
+  skills              String?
+  experience          String?
+  education           String?
+  projects            String?
+  preferredRoles      String?
   profileParsedAt     DateTime?
 
-  // Job preferences
-  jobKeywords         String?   // JSON array of keywords for job search
-  jobLocations        String?   // JSON array of preferred locations
+  // Preferences (JSON-encoded arrays). Nothing runs automatically until
+  // the user has confirmed them (preferencesConfirmedAt).
+  jobKeywords         String?
+  jobLocations        String?
+  preferencesConfirmedAt DateTime?
+  autoApplyEnabled    Boolean   @default(false)
+  autoApplyMinScore   Int       @default(60)
+  autoApplyDailyLimit Int       @default(5)
+
+  lastJobSearchAt     DateTime?
+  lastGmailSyncAt     DateTime?
 
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
   accounts            Account[]
   sessions            Session[]
+  resumeFiles         ResumeFile[]
   jobs                Job[]
   applications        JobApplication[]
   applicationHistory  ApplicationHistory[]
+  sentEmails          SentEmail[]
   emails              JobEmail[]
   notifications       Notification[]
 }
 
+// Uploaded CV binary, kept server-side so it can be attached to application emails.
+model ResumeFile {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  fileName    String
+  contentType String
+  size        Int
+  data        Bytes
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Google account + OAuth tokens (server-side only, never sent to the browser).
 model Account {
-  id                 String  @id @default(cuid())
-  userId             String
+  id                 String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId             String  @db.ObjectId
   type               String
   provider           String
   providerAccountId  String
@@ -52,21 +84,26 @@ model Account {
   scope              String?
   id_token           String?
   session_state      String?
+  // Set when the user disconnects Gmail or Google revokes the grant.
+  // The row is kept so signing in again re-links to the same user.
+  disconnectedAt     DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Session {
-  id           String   @id @default(cuid())
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
   sessionToken String   @unique
-  userId       String
+  userId       String   @db.ObjectId
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   identifier String
   token      String   @unique
   expires    DateTime
@@ -75,19 +112,21 @@ model VerificationToken {
 }
 
 model Job {
-  id              String    @id @default(cuid())
-  userId          String
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String    @db.ObjectId
   title           String
   company         String
   location        String?
   description     String?
   url             String
-  source          String    // "linkedin", "google", "indeed", etc.
+  applyEmail      String?   // recruiter/apply email found in the posting, if any
+  source          String
   salary          String?
-  jobType         String?   // "full-time", "contract", etc.
+  jobType         String?
   seniority       String?
-  skills          String?   // JSON array as string
-  matchScore      Float?    // 0-100 relevance score
+  skills          String?
+  matchScore      Float?
+  status          String    @default("new") // new, saved, applied, skipped
   foundAt         DateTime  @default(now())
   savedAt         DateTime?
   applied         Boolean   @default(false)
@@ -98,84 +137,99 @@ model Job {
   applications    JobApplication[]
   emails          JobEmail[]
 
-  @@unique([userId, url])  // Per-user unique constraint
+  @@unique([userId, url])
   @@index([userId])
   @@index([company])
-  @@index([source])
 }
 
 model JobApplication {
-  id            String    @id @default(cuid())
-  jobId         String
-  userId        String
-  status        String    @default("applied") // "applied", "interview", "assessment", "rejected", "offer"
-  appliedAt     DateTime  @default(now())
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  jobId          String    @db.ObjectId
+  userId         String    @db.ObjectId
+  status         String    @default("applied") // applied, interview, assessment, rejected, offer
+  appliedAt      DateTime  @default(now())
   applicationUrl String?
-  notes         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  job           Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  emails        JobEmail[]
+  job            Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emails         JobEmail[]
 
   @@unique([userId, jobId])
   @@index([userId])
-  @@index([status])
   @@index([appliedAt])
 }
 
 model ApplicationHistory {
-  id              String    @id @default(cuid())
-  userId          String
-  jobId           String?   // May be null if job was deleted
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String    @db.ObjectId
+  jobId           String?   @db.ObjectId
   jobUrl          String
   company         String
   jobTitle        String
-  recipientEmail  String
+  recipientEmail  String?
   appliedAt       DateTime  @default(now())
   method          String    // "auto", "manual"
-  status          String?   // "success", "blocked_captcha", "error", etc.
+  status          String?   // "success", "failed"
   notes           String?
   createdAt       DateTime  @default(now())
 
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
-  @@index([appliedAt])
-  @@index([jobUrl])
+  @@index([userId, appliedAt])
+  @@index([userId, jobUrl])
+}
+
+// Every email Boot sent through the user's own Gmail.
+model SentEmail {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String   @db.ObjectId
+  jobId          String?  @db.ObjectId
+  applicationId  String?  @db.ObjectId
+  gmailMessageId String
+  gmailThreadId  String?
+  to             String
+  subject        String
+  body           String
+  sentAt         DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, sentAt])
+  @@index([userId, gmailThreadId])
 }
 
 model JobEmail {
-  id              String    @id @default(cuid())
-  userId          String
-  jobId           String
-  applicationId   String?
-  gmailMessageId  String    @unique
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String    @db.ObjectId
+  jobId           String?   @db.ObjectId
+  applicationId   String?   @db.ObjectId
+  gmailMessageId  String
+  gmailThreadId   String?
   from            String
   subject         String
   body            String?
-  emailType       String    // "confirmation", "interview", "assessment", "rejection", "other"
-  status          String?   // custom status
+  emailType       String    // confirmation, interview, assessment, rejection, offer, other
+  status          String?
   isRead          Boolean   @default(false)
   receivedAt      DateTime
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  job             Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  application     JobApplication?   @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job             Job?            @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  application     JobApplication? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
 
-  @@index([userId])
-  @@index([jobId])
-  @@index([applicationId])
-  @@index([emailType])
+  @@unique([userId, gmailMessageId])
+  @@index([userId, receivedAt])
 }
 
 model Notification {
-  id        String    @id @default(cuid())
-  userId    String
-  type      String    // "interview", "assessment", "rejection", "offer", "email"
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String    @db.ObjectId
+  type      String
   title     String
   message   String
   read      Boolean   @default(false)
@@ -184,5 +238,5 @@ model Notification {
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([userId, read])
 }

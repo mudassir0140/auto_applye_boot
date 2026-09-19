@@ -13,98 +13,38 @@ export interface DuplicateCheckResult {
 const COOLDOWN_DAYS = 7
 
 /**
- * Check if a user has already applied to the same job/company within the cooldown period
- * Uses multiple identifiers for matching: URL, company name, and recipient email
+ * 7-day duplicate protection, scoped to one user. A new application is blocked if,
+ * within the last 7 days, the same user already applied to the same posting URL,
+ * the same company + job title, or emailed the same recipient address.
+ * Only successful attempts count, so a failed send can be retried.
+ * Fails CLOSED: if the history can't be read we refuse rather than risk a duplicate email.
  */
 export async function checkApplicationCooldown(
   userId: string,
   jobUrl: string,
   company: string,
-  recipientEmail?: string
+  jobTitle: string,
+  recipientEmail?: string | null
 ): Promise<DuplicateCheckResult> {
-  const cooldownDate = new Date()
-  cooldownDate.setDate(cooldownDate.getDate() - COOLDOWN_DAYS)
+  const since = new Date(Date.now() - COOLDOWN_DAYS * 24 * 60 * 60 * 1000)
 
-  try {
-    // Check application history for recent applications to the same URL
-    const urlMatch = await prisma.applicationHistory.findFirst({
-      where: {
-        userId,
-        jobUrl,
-        appliedAt: {
-          gte: cooldownDate,
-        },
-      },
-      orderBy: {
-        appliedAt: 'desc',
-      },
-    })
+  const matchers: Array<Record<string, unknown>> = [
+    { jobUrl },
+    { company: { equals: company, mode: 'insensitive' }, jobTitle: { equals: jobTitle, mode: 'insensitive' } },
+  ]
+  if (recipientEmail) matchers.push({ recipientEmail: { equals: recipientEmail, mode: 'insensitive' } })
 
-    if (urlMatch) {
-      return {
-        isDuplicate: true,
-        lastApplyDate: urlMatch.appliedAt,
-        daysRemaining: calculateDaysRemaining(urlMatch.appliedAt, COOLDOWN_DAYS),
-        cooldownExpiresAt: calculateCooldownExpiry(urlMatch.appliedAt, COOLDOWN_DAYS),
-      }
-    }
+  const match = await prisma.applicationHistory.findFirst({
+    where: { userId, status: 'success', appliedAt: { gte: since }, OR: matchers },
+    orderBy: { appliedAt: 'desc' },
+  })
 
-    // Check for applications to the same company within cooldown
-    const companyMatch = await prisma.applicationHistory.findFirst({
-      where: {
-        userId,
-        company,
-        appliedAt: {
-          gte: cooldownDate,
-        },
-      },
-      orderBy: {
-        appliedAt: 'desc',
-      },
-    })
-
-    if (companyMatch) {
-      // Only consider it a duplicate if email also matches (if provided)
-      if (recipientEmail && companyMatch.recipientEmail === recipientEmail) {
-        return {
-          isDuplicate: true,
-          lastApplyDate: companyMatch.appliedAt,
-          daysRemaining: calculateDaysRemaining(companyMatch.appliedAt, COOLDOWN_DAYS),
-          cooldownExpiresAt: calculateCooldownExpiry(companyMatch.appliedAt, COOLDOWN_DAYS),
-        }
-      }
-    }
-
-    // Check if exact same recipient email was used
-    if (recipientEmail) {
-      const emailMatch = await prisma.applicationHistory.findFirst({
-        where: {
-          userId,
-          recipientEmail,
-          appliedAt: {
-            gte: cooldownDate,
-          },
-        },
-        orderBy: {
-          appliedAt: 'desc',
-        },
-      })
-
-      if (emailMatch) {
-        return {
-          isDuplicate: true,
-          lastApplyDate: emailMatch.appliedAt,
-          daysRemaining: calculateDaysRemaining(emailMatch.appliedAt, COOLDOWN_DAYS),
-          cooldownExpiresAt: calculateCooldownExpiry(emailMatch.appliedAt, COOLDOWN_DAYS),
-        }
-      }
-    }
-
-    return { isDuplicate: false }
-  } catch (error) {
-    console.error('Error checking application cooldown:', error)
-    // On error, allow application to proceed
-    return { isDuplicate: false }
+  if (!match) return { isDuplicate: false }
+  return {
+    isDuplicate: true,
+    lastApplyDate: match.appliedAt,
+    daysRemaining: calculateDaysRemaining(match.appliedAt, COOLDOWN_DAYS),
+    cooldownExpiresAt: calculateCooldownExpiry(match.appliedAt, COOLDOWN_DAYS),
   }
 }
 
@@ -117,7 +57,7 @@ export async function recordApplicationAttempt(
   jobUrl: string,
   company: string,
   jobTitle: string,
-  recipientEmail: string,
+  recipientEmail: string | null,
   method: 'auto' | 'manual' = 'auto',
   status: string = 'success',
   notes?: string

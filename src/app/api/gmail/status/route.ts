@@ -1,93 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth/next'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import { NextResponse } from 'next/server'
+import { getCurrentUser, unauthorized } from '@/lib/session'
+import { getGoogleAccount, isGmailConnected } from '@/lib/gmail'
+import { disconnectGmail } from '@/lib/gmail-disconnect'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const session = await getServerSession(authOptions)
-
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
-    const gmailAccount = await prisma.account.findFirst({
-      where: {
-        userId: user.id,
-        provider: 'google',
-      },
-    })
-
+    const user = await getCurrentUser()
+    if (!user) return unauthorized()
+    const account = await getGoogleAccount(user.id)
+    const connected = isGmailConnected(account)
     return NextResponse.json({
-      connected: !!gmailAccount?.access_token,
-      email: gmailAccount ? session.user.email : null,
-      lastSync: null,
+      connected,
+      email: connected ? user.email : null,
+      needsReconnect: !!account && !connected,
+      lastSync: user.lastGmailSyncAt,
     })
   } catch (error) {
     console.error('Status check error:', error)
-    return NextResponse.json(
-      { error: 'Failed to check Gmail status' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to check Gmail status' }, { status: 500 })
   }
 }
 
-export async function DELETE(req: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
-    // Delete Gmail OAuth connection ONLY
-    // Do NOT delete sessions - user should stay logged in
-    await prisma.account.deleteMany({
-      where: {
-        userId: user.id,
-        provider: 'google',
-      },
-    })
-
-    return NextResponse.json({
-      success: true,
-      message: 'Gmail disconnected successfully',
-    })
-  } catch (error) {
-    console.error('Disconnect error:', error)
-    return NextResponse.json(
-      { error: 'Failed to disconnect Gmail' },
-      { status: 500 }
-    )
-  }
+export async function DELETE() {
+  const user = await getCurrentUser()
+  if (!user) return unauthorized()
+  await disconnectGmail(user.id)
+  return NextResponse.json({ success: true, message: 'Gmail disconnected successfully' })
 }

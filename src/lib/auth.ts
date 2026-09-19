@@ -34,7 +34,10 @@ export const authOptions: NextAuthOptions = {
     GoogleProvider({
       clientId: clientId || '',
       clientSecret: clientSecret || '',
-      allowDangerousEmailAccountLinking: false,
+      // Google is the only provider and verifies email ownership, so re-linking a
+      // returning user's Google account to their existing Boot user is safe.
+      // Without this, a user whose Account row was lost gets OAuthAccountNotLinked.
+      allowDangerousEmailAccountLinking: true,
       authorization: {
         params: {
           prompt: 'consent',
@@ -92,6 +95,45 @@ export const authOptions: NextAuthOptions = {
       if (url.startsWith(baseUrl)) return url
       if (url.startsWith('/')) return `${baseUrl}${url}`
       return baseUrl
+    },
+  },
+  events: {
+    // NextAuth only writes Account tokens the first time a Google account is
+    // linked. On every later sign-in Google issues fresh tokens, so persist
+    // them here — otherwise the DB keeps a stale access token and Gmail shows
+    // "not connected" after re-login.
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== 'google' || !user?.id) return
+      try {
+        await prisma.account.updateMany({
+          where: {
+            userId: user.id,
+            provider: 'google',
+            providerAccountId: account.providerAccountId,
+          },
+          data: {
+            access_token: account.access_token ?? null,
+            expires_at: account.expires_at ?? null,
+            scope: account.scope ?? null,
+            token_type: account.token_type ?? null,
+            id_token: account.id_token ?? null,
+            // Google only returns a refresh token on consent; never overwrite
+            // a stored one with undefined.
+            ...(account.refresh_token ? { refresh_token: account.refresh_token } : {}),
+            disconnectedAt: null,
+          },
+        })
+        const p = profile as { name?: string; picture?: string } | undefined
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            ...(p?.name ? { name: p.name } : {}),
+            ...(p?.picture ? { image: p.picture } : {}),
+          },
+        })
+      } catch (error) {
+        console.error('[auth] failed to persist Google tokens on sign-in:', error)
+      }
     },
   },
   pages: {

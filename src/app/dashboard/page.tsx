@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useSession } from 'next-auth/react'
+import { useSession, signIn } from 'next-auth/react'
 import Link from 'next/link'
 import { useGmailConnection } from '@/hooks/useGmailConnection'
 
@@ -51,6 +51,7 @@ interface UserProfile {
   cvUrl: string | null
   portfolioUrl: string | null
   gmailEmail: string | null
+  preferencesConfirmed?: boolean
   skills: string[]
   preferredRoles: string[]
 }
@@ -144,7 +145,7 @@ export default function Dashboard() {
   }
 
   const handleGmailConnect = () => {
-    window.location.href = '/api/auth/signin'
+    signIn('google', { callbackUrl: '/dashboard' })
   }
 
   const handleGmailDisconnect = async () => {
@@ -171,11 +172,17 @@ export default function Dashboard() {
       {/* Top Header */}
       <div className="bg-white border-b border-gray-200 px-8 py-6">
         <div className="flex items-center justify-between">
-          <div>
+          <div className="flex items-center gap-4">
+            {session?.user?.image && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={session.user.image} alt="" className="w-12 h-12 rounded-full" referrerPolicy="no-referrer" />
+            )}
+            <div>
             <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
             <p className="text-gray-600 mt-1">
               Welcome back, <span className="font-semibold">{session?.user?.name || 'User'}</span>! 👋
             </p>
+            </div>
           </div>
 
           {/* Gmail Connection Status */}
@@ -211,6 +218,12 @@ export default function Dashboard() {
       {/* Main Content */}
       <div className="flex-1 overflow-auto">
         <div className="p-8">
+          {userProfile && !userProfile.preferencesConfirmed && (
+            <div className="mb-8 bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-center justify-between">
+              <p className="text-blue-900">Upload your CV and confirm your skills to start finding and tracking jobs.</p>
+              <Link href="/dashboard/profile" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Set up profile</Link>
+            </div>
+          )}
           {error && (
             <div className="mb-8 bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
               <p className="text-yellow-800"><strong>⚠️ Warning:</strong> {error}</p>

@@ -47,6 +47,25 @@ export default function SettingsPage() {
     }
   }, [session, updateSession])
 
+  async function handleSave() {
+    if (!settings) return
+    setSaving(true)
+    try {
+      const response = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: settings.name, cvUrl: settings.cvUrl || '', portfolioUrl: settings.portfolioUrl || '' }),
+      })
+      if (!response.ok) throw new Error('Failed to save')
+      alert('Saved')
+    } catch (error) {
+      console.error('Save error:', error)
+      alert('Failed to save settings')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleConnectGmail() {
     setGmailConnecting(true)
     try {
@@ -168,6 +187,14 @@ export default function SettingsPage() {
             />
             <p className="text-sm text-gray-600 mt-1">Link to your portfolio or GitHub</p>
           </div>
+
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
         </div>
       </div>
 
@@ -221,35 +248,12 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* Search Preferences */}
       <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Job Search Preferences</h2>
-
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Job Keywords
-            </label>
-            <input
-              type="text"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="React, Next.js, JavaScript, TypeScript"
-            />
-            <p className="text-sm text-gray-600 mt-1">Comma-separated list of job keywords</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Preferred Locations
-            </label>
-            <input
-              type="text"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Remote, San Francisco, New York"
-            />
-            <p className="text-sm text-gray-600 mt-1">Comma-separated list of preferred locations</p>
-          </div>
-        </div>
+        <h2 className="text-xl font-semibold text-gray-900 mb-2">Job Search Preferences</h2>
+        <p className="text-gray-600 text-sm">
+          Skills, keywords, locations and automatic-apply options are managed on the{' '}
+          <a href="/dashboard/profile" className="text-blue-600 underline">Profile</a> page.
+        </p>
       </div>
     </div>
   )

@@ -1,128 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth/next'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
-import { sendApplicationEmail, generateApplicationEmail, getAccountEmail } from '@/lib/gmail'
+import { getCurrentUser, unauthorized } from '@/lib/session'
+import { applyToJob } from '@/lib/apply'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
+  const user = await getCurrentUser()
+  if (!user) return unauthorized()
+  const { jobId, recruiterEmail } = await req.json().catch(() => ({}))
+  if (!jobId) return NextResponse.json({ error: 'Job ID is required' }, { status: 400 })
 
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const { jobId, recruiterEmail, recruiterName } = await req.json()
-
-    if (!jobId || !recruiterEmail) {
-      return NextResponse.json(
-        { error: 'Job ID and recruiter email are required' },
-        { status: 400 }
-      )
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-      select: { id: true, email: true, name: true, cvUrl: true, portfolioUrl: true }
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
-    // Check if Gmail is connected
-    const gmailAccount = await prisma.account.findFirst({
-      where: {
-        userId: user.id,
-        provider: 'google',
-      },
-    })
-
-    if (!gmailAccount?.access_token) {
-      return NextResponse.json(
-        { error: 'Gmail not connected. Please connect Gmail in settings.' },
-        { status: 400 }
-      )
-    }
-
-    const job = await prisma.job.findUnique({
-      where: { id: jobId },
-      select: { title: true, company: true, userId: true }
-    })
-
-    if (!job || job.userId !== user.id) {
-      return NextResponse.json(
-        { error: 'Job not found' },
-        { status: 404 }
-      )
-    }
-
-    // Check if application already sent
-    const existingApplication = await prisma.jobApplication.findUnique({
-      where: { userId_jobId: { userId: user.id, jobId } },
-    })
-
-    if (!existingApplication) {
-      return NextResponse.json(
-        { error: 'No application found for this job' },
-        { status: 404 }
-      )
-    }
-
-    // Generate personalized email
-    const emailContent = generateApplicationEmail(
-      job.title,
-      job.company,
-      recruiterName || null,
-      user.email,
-      user.name || 'Applicant',
-      user.cvUrl || null,
-      user.portfolioUrl || null
-    )
-
-    emailContent.to = recruiterEmail
-
-    // Send email via Gmail
-    const result = await sendApplicationEmail(user.id, emailContent)
-
-    // Update application with email sent timestamp and status
-    await prisma.jobApplication.update({
-      where: { userId_jobId: { userId: user.id, jobId } },
-      data: {
-        notes: `Email sent to ${recruiterEmail} at ${new Date().toISOString()}`,
-        updatedAt: new Date(),
-      },
-    })
-
-    // Create notification
-    await prisma.notification.create({
-      data: {
-        userId: user.id,
-        type: 'email',
-        title: 'Application Email Sent',
-        message: `Sent application email for ${job.title} at ${job.company} to ${recruiterEmail}`,
-      },
-    })
-
-    return NextResponse.json({
-      success: true,
-      messageId: result.messageId,
-      message: `Application email sent to ${recruiterEmail}`,
-    })
-  } catch (error) {
-    console.error('Send application email error:', error)
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'Failed to send application email',
-        details: error instanceof Error ? error.message : undefined
-      },
-      { status: 500 }
-    )
+  const result = await applyToJob(user, jobId, { method: 'email', recipientEmail: recruiterEmail })
+  if (!result.ok) {
+    const status = result.code === 'cooldown' ? 429 : result.code === 'not_found' ? 404 : result.code === 'send_failed' ? 502 : 400
+    return NextResponse.json({ ...result, error: result.message }, { status })
   }
+  return NextResponse.json({ ...result, message: `Application email sent to ${result.sentTo}` })
 }
