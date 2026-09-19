@@ -130,13 +130,30 @@ export const authOptions: NextAuthOptions = {
       if (session?.user) {
         (session.user as any).id = user.id
       }
+      console.log('📋 Session callback:', {
+        userId: user.id,
+        email: session?.user?.email,
+        sessionTimestamp: new Date().toISOString(),
+      })
       return session
     },
     async signIn({ user, account, profile, email, credentials }) {
+      console.log('✅ Sign in callback:', {
+        userId: user.id,
+        email: user.email,
+        provider: account?.provider,
+        timestamp: new Date().toISOString(),
+      })
       // Account is linked by PrismaAdapter automatically
       return true
     },
     async jwt({ token, user, account }) {
+      console.log('🔑 JWT callback:', {
+        hasUser: !!user,
+        hasAccount: !!account,
+        provider: account?.provider,
+        timestamp: new Date().toISOString(),
+      })
       // Persist account provider info to JWT for session
       if (account?.provider) {
         token.provider = account.provider
@@ -144,11 +161,25 @@ export const authOptions: NextAuthOptions = {
       return token
     },
     async redirect({ url, baseUrl }) {
-      // Always redirect to dashboard after sign in
-      if (url === `${baseUrl}/` || url.startsWith(`${baseUrl}/?`)) {
-        return `${baseUrl}/dashboard`
+      console.log('🔄 Redirect callback:', {
+        url,
+        baseUrl,
+        timestamp: new Date().toISOString(),
+      })
+      // Ensure we always use full URLs
+      if (!url.startsWith(baseUrl)) {
+        // If the callback URL is a relative path, build full URL
+        if (url.startsWith('/')) {
+          const fullUrl = `${baseUrl}${url}`
+          console.log('↪️  Redirecting to full URL:', fullUrl)
+          return fullUrl
+        }
+        // Invalid URL, redirect to base
+        console.log('↪️  Invalid URL, redirecting to base')
+        return baseUrl
       }
-      return url.startsWith(baseUrl) ? url : baseUrl
+      console.log('↪️  Redirecting to:', url)
+      return url
     },
   },
   pages: {
