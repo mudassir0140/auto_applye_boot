@@ -22,17 +22,12 @@ export default function SettingsPage() {
   useEffect(() => {
     async function fetchSettings() {
       try {
-        // Force session update to pick up any OAuth changes
-        const updatedSession = await updateSession()
-        console.log('🔄 Session updated:', updatedSession)
+        // Pick up any changes from a just-completed OAuth redirect
+        await updateSession()
 
         const response = await fetch('/api/dashboard/stats')
         if (!response.ok) throw new Error('Failed to fetch settings')
         const data = await response.json()
-        console.log('📊 Settings fetched:', {
-          email: data.user.email,
-          gmailConnected: data.stats.gmailConnected,
-        })
         setSettings({
           email: data.user.email,
           name: data.user.name,
@@ -41,7 +36,7 @@ export default function SettingsPage() {
           gmailConnected: data.stats.gmailConnected,
         })
       } catch (error) {
-        console.error('❌ Fetch error:', error)
+        console.error('Failed to load settings:', error)
       } finally {
         setLoading(false)
       }
@@ -107,6 +102,23 @@ export default function SettingsPage() {
       {/* Account Information */}
       <div className="bg-white p-6 rounded-lg shadow mb-8">
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Account Information</h2>
+
+        {session?.user?.image && (
+          <div className="flex items-center gap-4 mb-6">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={session.user.image}
+              alt={session.user.name || 'Profile picture'}
+              className="w-16 h-16 rounded-full"
+              referrerPolicy="no-referrer"
+            />
+            <div>
+              <p className="font-medium text-gray-900">{session.user.name}</p>
+              <p className="text-sm text-gray-600">{session.user.email}</p>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
@@ -167,7 +179,9 @@ export default function SettingsPage() {
           <div>
             <p className="font-medium text-gray-900">Gmail Status</p>
             <p className={settings.gmailConnected ? 'text-green-600' : 'text-gray-600'}>
-              {settings.gmailConnected ? '✓ Connected' : '✗ Not connected'}
+              {settings.gmailConnected
+                ? `✓ Google Connected: ${settings.email}`
+                : '✗ Not connected'}
             </p>
           </div>
         </div>
@@ -184,7 +198,7 @@ export default function SettingsPage() {
               disabled={gmailDisconnecting}
               className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400"
             >
-              {gmailDisconnecting ? 'Disconnecting...' : 'Disconnect Gmail'}
+              {gmailDisconnecting ? 'Disconnecting...' : 'Disconnect Google'}
             </button>
           ) : (
             <button
@@ -192,7 +206,7 @@ export default function SettingsPage() {
               disabled={gmailConnecting}
               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
             >
-              {gmailConnecting ? 'Connecting...' : 'Connect Gmail'}
+              {gmailConnecting ? 'Connecting...' : 'Sign in with Google'}
             </button>
           )}
         </div>

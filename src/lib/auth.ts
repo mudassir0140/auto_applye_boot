@@ -14,91 +14,18 @@ const clientId = process.env.GOOGLE_CLIENT_ID
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET
 const secret = process.env.NEXTAUTH_SECRET
 
-// Validate NEXTAUTH_SECRET is set and is a string
 if (!secret) {
-  const errorMsg = 'NEXTAUTH_SECRET environment variable is not set or is empty'
   const instructions = process.env.NODE_ENV === 'production'
     ? 'Set NEXTAUTH_SECRET in your Vercel project environment variables'
     : 'Set NEXTAUTH_SECRET in .env.local'
-
-  const fullError = `NextAuth Configuration Error: ${errorMsg}. ${instructions}`
-
-  throw new Error(fullError)
+  throw new Error(`NextAuth Configuration Error: NEXTAUTH_SECRET is not set. ${instructions}`)
 }
 
-if (typeof secret !== 'string') {
-  throw new Error(`NextAuth Configuration Error: NEXTAUTH_SECRET must be a string, received ${typeof secret}`)
+if (!clientId || clientId === 'your-google-client-id-here') {
+  console.error('[auth] GOOGLE_CLIENT_ID is missing or still a placeholder — sign-in will fail with 401: invalid_client')
 }
-
-const callbackUrl = `${baseUrl}/api/auth/callback/google`
-
-// Log configuration with debugging info (but not secrets)
-if (process.env.NODE_ENV === 'development') {
-  let clientIdDisplay = '❌ NOT SET'
-  if (clientId && clientId !== 'your-google-client-id-here') {
-    // Show first 8 and last 6 characters only
-    clientIdDisplay = `${clientId.slice(0, 8)}...${clientId.slice(-6)}`
-  } else if (clientId === 'your-google-client-id-here') {
-    clientIdDisplay = '❌ PLACEHOLDER'
-  }
-
-  const hasSecret = clientSecret && clientSecret !== 'your-google-client-secret-here'
-
-  console.log('\n========================================')
-  console.log('🔐 OAUTH CONFIGURATION DIAGNOSTIC')
-  console.log('========================================')
-  console.log(`Timestamp: ${new Date().toISOString()}`)
-  console.log(`Environment: ${process.env.NODE_ENV}`)
-  console.log('')
-  console.log('📋 Loaded Values:')
-  console.log(`  NEXTAUTH_URL: ${process.env.NEXTAUTH_URL || '(not set - using default)'}`)
-  console.log(`  Base URL: ${baseUrl}`)
-  console.log(`  Callback URL: ${callbackUrl}`)
-  console.log(`  GOOGLE_CLIENT_ID: ${clientIdDisplay}`)
-  console.log(`  GOOGLE_CLIENT_SECRET: ${hasSecret ? '✓ SET' : '❌ NOT SET or PLACEHOLDER'}`)
-  console.log(`  NEXTAUTH_SECRET: ${secret ? '✓ SET' : '❌ NOT SET'}`)
-  console.log('')
-  console.log('📤 OAuth Request Will Send:')
-  console.log(`  endpoint: https://accounts.google.com/o/oauth2/v2/auth`)
-  console.log(`  client_id: ${clientId ? (clientId !== 'your-google-client-id-here' ? clientIdDisplay : '❌ PLACEHOLDER') : '❌ EMPTY'}`)
-  console.log(`  redirect_uri: ${callbackUrl}`)
-  console.log(`  scope: openid email profile gmail.readonly gmail.send`)
-  console.log('')
-  console.log('🔍 Google Cloud Console Must Have:')
-  console.log(`  ✓ Authorized JavaScript origins: ${baseUrl}`)
-  console.log(`  ✓ Authorized redirect URIs: ${callbackUrl}`)
-  console.log(`  ✓ OAuth Client ID: matches the value above`)
-  console.log('')
-
-  const issues: string[] = []
-  if (!clientId) {
-    issues.push('GOOGLE_CLIENT_ID is completely missing from environment')
-  } else if (clientId === 'your-google-client-id-here') {
-    issues.push('GOOGLE_CLIENT_ID is still using PLACEHOLDER value - this causes 401: invalid_client')
-  }
-  if (!clientSecret) {
-    issues.push('GOOGLE_CLIENT_SECRET is completely missing from environment')
-  } else if (clientSecret === 'your-google-client-secret-here') {
-    issues.push('GOOGLE_CLIENT_SECRET is still using PLACEHOLDER value')
-  }
-  if (!secret) {
-    issues.push('NEXTAUTH_SECRET is not set')
-  }
-
-  if (issues.length > 0) {
-    console.error('❌ CONFIGURATION ERRORS:')
-    issues.forEach((issue, i) => console.error(`  ${i + 1}. ${issue}`))
-    console.error('')
-    console.error('💡 TO FIX:')
-    console.error('  1. Get real credentials from: https://console.cloud.google.com/apis/credentials')
-    console.error('  2. Put them in .env.local (replace placeholder values)')
-    console.error('  3. Restart npm run dev')
-    console.error('')
-  } else {
-    console.log('✅ Configuration looks correct!')
-    console.log('   If still getting 401 error, verify Google Cloud Console settings.')
-  }
-  console.log('========================================\n')
+if (!clientSecret || clientSecret === 'your-google-client-secret-here') {
+  console.error('[auth] GOOGLE_CLIENT_SECRET is missing or still a placeholder — sign-in will fail')
 }
 
 export const authOptions: NextAuthOptions = {
@@ -126,70 +53,75 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async session({ session, user }) {
-      if (session?.user) {
-        (session.user as any).id = user.id
-      }
-      console.log('📋 Session callback:', {
-        userId: user.id,
-        email: session?.user?.email,
-        sessionTimestamp: new Date().toISOString(),
-      })
-      return session
-    },
-    async signIn({ user, account, profile, email, credentials }) {
-      console.log('✅ Sign in callback:', {
-        userId: user.id,
-        email: user.email,
-        provider: account?.provider,
-        timestamp: new Date().toISOString(),
-      })
-      // Account is linked by PrismaAdapter automatically
-      return true
-    },
+    // Runs on every request. `user`/`account` are only populated on the
+    // initial sign-in — that's when we copy the Prisma User id and Google
+    // profile picture onto the token so they survive for the life of the
+    // session (the JWT cookie), without a database lookup on every request.
     async jwt({ token, user, account }) {
-      console.log('🔑 JWT callback:', {
-        hasUser: !!user,
-        hasAccount: !!account,
-        provider: account?.provider,
-        timestamp: new Date().toISOString(),
-      })
-      // Persist account provider info to JWT for session
+      if (user) {
+        token.id = user.id
+        token.picture = user.image
+      }
       if (account?.provider) {
         token.provider = account.provider
       }
       return token
     },
-    async redirect({ url, baseUrl }) {
-      console.log('🔄 Redirect callback:', {
-        url,
-        baseUrl,
-        timestamp: new Date().toISOString(),
-      })
-      // Ensure we always use full URLs
-      if (!url.startsWith(baseUrl)) {
-        // If the callback URL is a relative path, build full URL
-        if (url.startsWith('/')) {
-          const fullUrl = `${baseUrl}${url}`
-          console.log('↪️  Redirecting to full URL:', fullUrl)
-          return fullUrl
+    // With strategy: 'jwt', session() receives `token`, not `user` — read the
+    // id/picture back off the token instead of doing a per-request DB call.
+    async session({ session, token }) {
+      if (session.user && token.id) {
+        (session.user as any).id = token.id as string
+        if (token.picture) {
+          session.user.image = token.picture as string
         }
-        // Invalid URL, redirect to base
-        console.log('↪️  Invalid URL, redirecting to base')
-        return baseUrl
       }
-      console.log('↪️  Redirecting to:', url)
-      return url
+      return session
+    },
+    async signIn({ user, account }) {
+      // PrismaAdapter creates/links the User + Account rows (with Google's
+      // access/refresh tokens) before this callback runs. Refuse to issue a
+      // session if that somehow didn't happen.
+      if (!user?.id) {
+        console.error('[auth] signIn blocked: adapter returned no user id for provider', account?.provider)
+        return false
+      }
+      return true
+    },
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith(baseUrl)) return url
+      if (url.startsWith('/')) return `${baseUrl}${url}`
+      return baseUrl
     },
   },
   pages: {
     signIn: '/',
     error: '/auth/error',
   },
+  // IMPORTANT: session strategy must be 'jwt', not 'database'.
+  //
+  // src/middleware.ts uses next-auth/middleware's withAuth(), which protects
+  // /dashboard/* by calling getToken() to decode the session cookie as a JWT.
+  // getToken() CANNOT read database-strategy sessions — that cookie is just
+  // an opaque lookup key, not a JWT — so it silently returned null, meaning
+  // `authorized: ({ token }) => !!token` was always false and the middleware
+  // redirected every successfully-authenticated user straight back to the
+  // sign-in page before the dashboard ever rendered. That was the actual
+  // root cause of "Google login succeeds but Boot still shows Sign in with
+  // Google": the user never even reached /dashboard for the connected state
+  // to show up.
+  //
+  // PrismaAdapter still creates/links the User + Account rows (with Google's
+  // access_token/refresh_token) on every sign-in regardless of session
+  // strategy, so this only changes how the Boot login session itself is
+  // stored (a signed JWT cookie instead of a Session row) — not how the
+  // Google account is saved. The JWT cookie is still persistent (maxAge
+  // below), so it survives page refresh and closing/reopening the browser,
+  // and is only cleared by an explicit signOut() (Logout button).
   session: {
-    strategy: 'database',
+    strategy: 'jwt',
     maxAge: 30 * 24 * 60 * 60,
   },
-  secret: secret,
+  secret,
   debug: process.env.NODE_ENV === 'development',
 }

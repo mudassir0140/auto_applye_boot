@@ -37,6 +37,8 @@ yarn-error.log*
 *.swo
 *~
 
-# Prisma
+# Prisma (defensive glob in case of nested/relative-path SQLite files)
 prisma/dev.db
 prisma/dev.db-journal
+prisma/**/*.db
+prisma/**/*.db-journal

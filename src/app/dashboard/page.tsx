@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import Link from 'next/link'
+import { useGmailConnection } from '@/hooks/useGmailConnection'
 
 interface DashboardStats {
   totalJobs: number
@@ -65,6 +66,7 @@ interface ApplicationHistory {
 
 export default function Dashboard() {
   const { data: session } = useSession()
+  const gmailStatus = useGmailConnection()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [recentApplications, setRecentApplications] = useState<RecentApplication[]>([])
   const [recentEmails, setRecentEmails] = useState<RecentEmail[]>([])
@@ -72,7 +74,6 @@ export default function Dashboard() {
   const [applicationHistory, setApplicationHistory] = useState<ApplicationHistory[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [gmailConnecting, setGmailConnecting] = useState(false)
 
   useEffect(() => {
     async function fetchDashboardData() {
@@ -143,14 +144,25 @@ export default function Dashboard() {
   }
 
   const handleGmailConnect = () => {
-    setGmailConnecting(true)
     window.location.href = '/api/auth/signin'
   }
 
-  const handleGmailDisconnect = () => {
+  const handleGmailDisconnect = async () => {
     if (confirm('Are you sure you want to disconnect Gmail?')) {
-      // TODO: Add API endpoint to disconnect Gmail
-      alert('Gmail disconnect feature coming soon')
+      try {
+        const response = await fetch('/api/gmail/disconnect', {
+          method: 'POST',
+        })
+        if (response.ok) {
+          await gmailStatus.refetch()
+          alert('Gmail account disconnected')
+        } else {
+          alert('Failed to disconnect Gmail')
+        }
+      } catch (error) {
+        console.error('Disconnect error:', error)
+        alert('Error disconnecting Gmail')
+      }
     }
   }
 
@@ -168,12 +180,12 @@ export default function Dashboard() {
 
           {/* Gmail Connection Status */}
           <div className="flex items-center gap-4">
-            {stats.gmailConnected ? (
+            {gmailStatus.connected ? (
               <div className="flex items-center gap-3 px-4 py-2 bg-green-50 rounded-lg border border-green-200">
                 <span className="text-lg">✅</span>
                 <div className="text-sm">
                   <p className="font-medium text-green-900">Gmail Connected</p>
-                  <p className="text-green-700 text-xs">{stats.gmailConnected ? userProfile?.gmailEmail : 'Not connected'}</p>
+                  <p className="text-green-700 text-xs">{gmailStatus.email}</p>
                 </div>
                 <button
                   onClick={handleGmailDisconnect}
@@ -185,11 +197,11 @@ export default function Dashboard() {
             ) : (
               <button
                 onClick={handleGmailConnect}
-                disabled={gmailConnecting}
+                disabled={gmailStatus.loading}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition"
               >
                 <span>📧</span>
-                <span>{gmailConnecting ? 'Connecting...' : 'Connect Gmail'}</span>
+                <span>{gmailStatus.loading ? 'Checking...' : 'Connect Gmail'}</span>
               </button>
             )}
           </div>

@@ -85,11 +85,26 @@ export default function DashboardLayout({
         {/* Bottom Section */}
         <div className="p-4 border-t border-gray-200 space-y-3">
           {/* User Profile */}
-          <div className="px-4 py-3 rounded-lg bg-gray-50">
-            <p className="text-xs text-gray-600 uppercase tracking-wider font-semibold">User</p>
-            <p className="text-sm font-medium text-gray-900 mt-1 truncate">
-              {session.user?.name || 'User'}
-            </p>
+          <div className="px-4 py-3 rounded-lg bg-gray-50 flex items-center gap-3">
+            {session.user?.image ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={session.user.image}
+                alt={session.user.name || 'Profile picture'}
+                className="w-9 h-9 rounded-full flex-shrink-0"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold flex-shrink-0">
+                {(session.user?.name || session.user?.email || 'U').charAt(0).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">
+                {session.user?.name || 'User'}
+              </p>
+              <p className="text-xs text-gray-500 truncate">{session.user?.email}</p>
+            </div>
           </div>
 
           {/* Logout Button */}
