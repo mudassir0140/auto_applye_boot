@@ -12,7 +12,7 @@ interface UserSettings {
 }
 
 export default function SettingsPage() {
-  const { data: session } = useSession()
+  const { data: session, update: updateSession } = useSession()
   const [settings, setSettings] = useState<UserSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -22,9 +22,17 @@ export default function SettingsPage() {
   useEffect(() => {
     async function fetchSettings() {
       try {
+        // Force session update to pick up any OAuth changes
+        const updatedSession = await updateSession()
+        console.log('🔄 Session updated:', updatedSession)
+
         const response = await fetch('/api/dashboard/stats')
         if (!response.ok) throw new Error('Failed to fetch settings')
         const data = await response.json()
+        console.log('📊 Settings fetched:', {
+          email: data.user.email,
+          gmailConnected: data.stats.gmailConnected,
+        })
         setSettings({
           email: data.user.email,
           name: data.user.name,
@@ -33,7 +41,7 @@ export default function SettingsPage() {
           gmailConnected: data.stats.gmailConnected,
         })
       } catch (error) {
-        console.error('Fetch error:', error)
+        console.error('❌ Fetch error:', error)
       } finally {
         setLoading(false)
       }
@@ -42,7 +50,7 @@ export default function SettingsPage() {
     if (session) {
       fetchSettings()
     }
-  }, [session])
+  }, [session, updateSession])
 
   async function handleConnectGmail() {
     setGmailConnecting(true)
