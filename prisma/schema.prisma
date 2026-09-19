@@ -8,21 +8,35 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  image         String?
-  cvUrl         String?
-  portfolioUrl  String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  name                String?
+  image               String?
+  cvUrl               String?
+  portfolioUrl        String?
 
-  accounts      Account[]
-  sessions      Session[]
-  jobs          Job[]
-  applications  JobApplication[]
-  emails        JobEmail[]
-  notifications Notification[]
+  // Parsed profile data from resume/portfolio
+  skills              String?   // JSON array of extracted skills
+  experience          String?   // JSON array of work experience
+  education           String?   // JSON array of education
+  projects            String?   // JSON array of projects
+  preferredRoles      String?   // JSON array of preferred job roles
+  profileParsedAt     DateTime?
+
+  // Job preferences
+  jobKeywords         String?   // JSON array of keywords for job search
+  jobLocations        String?   // JSON array of preferred locations
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  accounts            Account[]
+  sessions            Session[]
+  jobs                Job[]
+  applications        JobApplication[]
+  applicationHistory  ApplicationHistory[]
+  emails              JobEmail[]
+  notifications       Notification[]
 }
 
 model Account {
@@ -67,7 +81,7 @@ model Job {
   company         String
   location        String?
   description     String?
-  url             String    @unique
+  url             String
   source          String    // "linkedin", "google", "indeed", etc.
   salary          String?
   jobType         String?   // "full-time", "contract", etc.
@@ -81,9 +95,10 @@ model Job {
   updatedAt       DateTime  @updatedAt
 
   user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  application     JobApplication?
+  applications    JobApplication[]
   emails          JobEmail[]
 
+  @@unique([userId, url])  // Per-user unique constraint
   @@index([userId])
   @@index([company])
   @@index([source])
@@ -91,7 +106,7 @@ model Job {
 
 model JobApplication {
   id            String    @id @default(cuid())
-  jobId         String    @unique
+  jobId         String
   userId        String
   status        String    @default("applied") // "applied", "interview", "assessment", "rejected", "offer"
   appliedAt     DateTime  @default(now())
@@ -104,8 +119,31 @@ model JobApplication {
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   emails        JobEmail[]
 
+  @@unique([userId, jobId])
   @@index([userId])
   @@index([status])
+  @@index([appliedAt])
+}
+
+model ApplicationHistory {
+  id              String    @id @default(cuid())
+  userId          String
+  jobId           String?   // May be null if job was deleted
+  jobUrl          String
+  company         String
+  jobTitle        String
+  recipientEmail  String
+  appliedAt       DateTime  @default(now())
+  method          String    // "auto", "manual"
+  status          String?   // "success", "blocked_captcha", "error", etc.
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([appliedAt])
+  @@index([jobUrl])
 }
 
 model JobEmail {

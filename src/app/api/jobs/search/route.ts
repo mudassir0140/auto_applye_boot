@@ -42,9 +42,9 @@ export async function POST(req: NextRequest) {
     const savedJobs = []
 
     for (const job of jobs) {
-      // Check if job already exists
-      const existingJob = await prisma.job.findUnique({
-        where: { url: job.url },
+      // Check if job already exists for this user
+      const existingJob = await prisma.job.findFirst({
+        where: { userId: user.id, url: job.url },
       })
 
       if (existingJob) {

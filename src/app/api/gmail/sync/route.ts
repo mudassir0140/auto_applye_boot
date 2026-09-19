@@ -75,8 +75,8 @@ export async function POST(req: NextRequest) {
 
       // Find related application
       const application = job
-        ? await prisma.jobApplication.findUnique({
-            where: { jobId: job.id },
+        ? await prisma.jobApplication.findFirst({
+            where: { jobId: job.id, userId: user.id },
           })
         : null
 

@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
 
     // Check if application already sent
     const existingApplication = await prisma.jobApplication.findUnique({
-      where: { jobId },
+      where: { userId_jobId: { userId: user.id, jobId } },
     })
 
     if (!existingApplication) {
@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
 
     // Update application with email sent timestamp and status
     await prisma.jobApplication.update({
-      where: { jobId },
+      where: { userId_jobId: { userId: user.id, jobId } },
       data: {
         notes: `Email sent to ${recruiterEmail} at ${new Date().toISOString()}`,
         updatedAt: new Date(),

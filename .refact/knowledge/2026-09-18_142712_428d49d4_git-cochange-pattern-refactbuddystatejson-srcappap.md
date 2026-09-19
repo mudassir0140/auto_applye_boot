@@ -6,7 +6,7 @@ tags:
 - git
 - pattern
 created: 2026-09-18
-updated: 2026-09-18
+updated: 2026-09-19
 filenames:
 - .refact/buddy/state.json
 - src/app/api/gmail/status/route.ts
@@ -15,7 +15,7 @@ kind: pattern
 status: proposed
 superseded_by: null
 deprecated_at: null
-review_after: 2026-09-18
+review_after: 2026-09-19
 source_chat_id: null
 created_at: 2026-09-18T09:27:12.076027200+00:00
 summary: null
