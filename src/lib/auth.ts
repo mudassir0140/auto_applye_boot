@@ -132,10 +132,22 @@ export const authOptions: NextAuthOptions = {
       }
       return session
     },
-    async signIn({ user, account, profile }) {
+    async signIn({ user, account, profile, email, credentials }) {
+      // Account is linked by PrismaAdapter automatically
       return true
     },
+    async jwt({ token, user, account }) {
+      // Persist account provider info to JWT for session
+      if (account?.provider) {
+        token.provider = account.provider
+      }
+      return token
+    },
     async redirect({ url, baseUrl }) {
+      // Always redirect to dashboard after sign in
+      if (url === `${baseUrl}/` || url.startsWith(`${baseUrl}/?`)) {
+        return `${baseUrl}/dashboard`
+      }
       return url.startsWith(baseUrl) ? url : baseUrl
     },
   },
