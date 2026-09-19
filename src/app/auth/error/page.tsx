@@ -27,7 +27,7 @@ function AuthErrorContent() {
     },
     'Callback': {
       title: 'Callback Error',
-      description: 'An error occurred during the authentication callback.',
+      description: 'Google approved the login but Boot could not save it. This is almost always the database: check DATABASE_URL in .env.local is a MongoDB Atlas URL (mongodb+srv://…) and the server terminal for [next-auth][error][adapter_error].',
     },
     'CredentialsSignin': {
       title: 'Sign-in Error',

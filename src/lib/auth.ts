@@ -28,6 +28,10 @@ if (!clientSecret || clientSecret === 'your-google-client-secret-here') {
   console.error('[auth] GOOGLE_CLIENT_SECRET is missing or still a placeholder — sign-in will fail')
 }
 
+if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_APP_URL && process.env.NEXTAUTH_URL && process.env.NEXTAUTH_URL !== process.env.NEXT_PUBLIC_APP_URL) {
+  console.error(`[auth] NEXTAUTH_URL (${process.env.NEXTAUTH_URL}) differs from NEXT_PUBLIC_APP_URL (${process.env.NEXT_PUBLIC_APP_URL}); the OAuth state cookie will not match.`)
+}
+
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
