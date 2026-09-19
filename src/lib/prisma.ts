@@ -1,35 +1,31 @@
 import { PrismaClient } from '@prisma/client'
 
-const globalForPrisma = global as unknown as { prisma: PrismaClient }
+const globalForPrisma = global as unknown as {
+  prisma: PrismaClient
+  prismaExitHookRegistered: boolean
+}
 
 export const prisma =
   globalForPrisma.prisma ||
   new PrismaClient({
     log: process.env.NODE_ENV === 'development'
       ? [
-          {
-            emit: 'stdout',
-            level: 'query',
-          },
-          {
-            emit: 'stdout',
-            level: 'error',
-          },
-          {
-            emit: 'stdout',
-            level: 'warn',
-          },
+          { emit: 'stdout', level: 'query' },
+          { emit: 'stdout', level: 'error' },
+          { emit: 'stdout', level: 'warn' },
         ]
       : [],
     errorFormat: 'pretty',
   })
 
-// Add connection error logging using process instead of prisma.$on
-// beforeExit hook is not applicable to library engine in Prisma 5.0.0
-if (process.env.NODE_ENV === 'development') {
-  process.on('beforeExit', async () => {
-    console.log('\n📊 Prisma: Client disconnecting')
+// Next.js dev mode re-evaluates this module on every hot-reload. Without this
+// guard, `process.on('beforeExit', ...)` below would register a new listener
+// each time, eventually tripping Node's MaxListenersExceededWarning.
+if (process.env.NODE_ENV === 'development' && !globalForPrisma.prismaExitHookRegistered) {
+  process.on('beforeExit', () => {
+    console.log('Prisma: process exiting, client disconnecting')
   })
+  globalForPrisma.prismaExitHookRegistered = true
 }
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
