@@ -123,6 +123,25 @@ export async function searchJobs(keywords: string[], location?: string): Promise
   return Array.from(out.values())
 }
 
+const MIN_RELEVANT_SCORE = 25
+
+const termHits = (text: string, term: string) =>
+  new RegExp(`(^|[^a-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(text)
+
+/**
+ * A posting is only worth tracking (and applying to) when it is about what the
+ * user does: its title or tags must name one of the user's skills/keywords
+ * (e.g. a Flutter developer never gets React-only roles) and the overall match
+ * score must clear a floor. Free-text mentions alone are not enough.
+ */
+export function isRelevantJob(job: Pick<FoundJob, 'title' | 'description' | 'tags'>, skills: string[], keywords: string[]): boolean {
+  const terms = Array.from(new Set([...skills, ...keywords].map((s) => s.toLowerCase().trim()).filter((s) => s.length > 1)))
+  if (terms.length === 0) return false
+  const headline = `${job.title} ${(job.tags || []).join(' ')}`.toLowerCase()
+  if (!terms.some((t) => termHits(headline, t))) return false
+  return calculateJobMatchScore(job, skills, keywords) >= MIN_RELEVANT_SCORE
+}
+
 /** 0–100: how many of the user's skills/keywords the posting mentions, plus title hits. */
 export function calculateJobMatchScore(job: Pick<FoundJob, 'title' | 'description' | 'tags'>, skills: string[], keywords: string[]): number {
   const haystack = `${job.title} ${(job.tags || []).join(' ')} ${job.description || ''}`.toLowerCase()

@@ -55,7 +55,7 @@ export default function JobsPage() {
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Search failed')
       setJobs(data.jobs || [])
-      setMessage({ kind: 'ok', text: `Found ${data.found} postings, ${data.added} new.` })
+      setMessage({ kind: 'ok', text: `Found ${data.found} postings, ${data.relevant ?? data.found} match your skills, ${data.added} new.` })
     } catch (error) {
       setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Search failed' })
     } finally {

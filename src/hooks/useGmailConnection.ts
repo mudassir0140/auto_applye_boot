@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 
 export interface GmailConnectionStatus {
@@ -9,67 +9,41 @@ export interface GmailConnectionStatus {
   refetch: () => Promise<void>
 }
 
+/**
+ * "Connected" is decided by the authenticated Google session (the JWT cookie),
+ * so it never flips back to "Sign in with Google" because the database is slow
+ * or unreachable. /api/me adds the MongoDB view: it saves the Google account if
+ * it is missing and reports an explicit disconnect / dead grant.
+ */
 export function useGmailConnection(): GmailConnectionStatus {
   const { data: session, status } = useSession()
-  const [connected, setConnected] = useState(false)
-  const [email, setEmail] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  // null = not known yet / API unavailable; false = MongoDB says disconnected.
+  const [storedConnected, setStoredConnected] = useState<boolean | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const checkConnection = async () => {
+  const checkConnection = useCallback(async () => {
     try {
-      setLoading(true)
       setError(null)
-
       const response = await fetch('/api/me')
-      if (!response.ok) {
-        throw new Error('Failed to check connection status')
-      }
-
+      if (!response.ok) throw new Error('Failed to check connection status')
       const data = await response.json()
-      setConnected(data.connected)
-      setEmail(data.email)
+      setStoredConnected(data.needsReconnect ? false : data.connected ? true : null)
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error'
-      setError(errorMsg)
-      setConnected(false)
-      setEmail(null)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    // Check connection when session is authenticated
-    if (status === 'authenticated' && session) {
-      checkConnection()
-    } else if (status === 'unauthenticated') {
-      setConnected(false)
-      setEmail(null)
-      setLoading(false)
-    }
-  }, [status, session])
-
-  // Also check connection after OAuth callback redirect
-  useEffect(() => {
-    // Check if we're returning from OAuth callback
-    const params = new URLSearchParams(window.location.search)
-    const code = params.get('code')
-    const error = params.get('error')
-
-    if (code || error) {
-      // Wait a moment for session to update, then check connection
-      const timer = setTimeout(() => {
-        checkConnection()
-      }, 500)
-      return () => clearTimeout(timer)
+      setError(err instanceof Error ? err.message : 'Unknown error')
+      setStoredConnected(null)
     }
   }, [])
 
+  useEffect(() => {
+    if (status === 'authenticated') checkConnection()
+    else if (status === 'unauthenticated') setStoredConnected(null)
+  }, [status, checkConnection])
+
+  const sessionConnected = status === 'authenticated' && !!session?.googleConnected
   return {
-    connected,
-    email,
-    loading,
+    connected: sessionConnected && storedConnected !== false,
+    email: sessionConnected ? session?.user?.email ?? null : null,
+    loading: status === 'loading',
     error,
     refetch: checkConnection,
   }

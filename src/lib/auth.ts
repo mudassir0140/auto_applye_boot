@@ -70,7 +70,7 @@ export const tokenIsExpired = (token: Pick<JWT, 'expires_at'>) =>
  * refresh token on consent, so a stored one is never overwritten with nothing.
  * Failures are logged, not thrown: the JWT session still logs the user in.
  */
-async function persistGoogleAccount(
+export async function persistGoogleAccount(
   profile: { email?: string | null; name?: string | null; picture?: string | null },
   account: { providerAccountId: string; access_token?: string; refresh_token?: string; expires_at?: number; scope?: string; token_type?: string; id_token?: string }
 ): Promise<string | undefined> {
@@ -158,6 +158,9 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       if (session.user && token.id) (session.user as { id?: string }).id = token.id
       session.error = token.error
+      // The cookie itself proves the Google grant, so the UI can show
+      // "Connected" without waiting on (or depending on) the database.
+      session.googleConnected = !!(token.access_token || token.refresh_token) && !token.error
       return session
     },
     async redirect({ url, baseUrl }) {

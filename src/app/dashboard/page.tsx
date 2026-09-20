@@ -76,20 +76,18 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [reloadKey, setReloadKey] = useState(0)
+
   useEffect(() => {
     async function fetchDashboardData() {
+      setLoading(true)
+      setError(null)
       try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 10000)
-
-        const response = await fetch('/api/dashboard/stats', {
-          signal: controller.signal,
-        })
-
-        clearTimeout(timeoutId)
-
-        if (!response.ok) throw new Error('Failed to fetch dashboard data')
-        const data = await response.json()
+        const response = await fetch('/api/dashboard/stats', { cache: 'no-store' })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(data.message || data.error || `Dashboard request failed (${response.status})`)
+        }
 
         setStats(data.stats)
         setRecentApplications(data.recentApplications || [])
@@ -97,28 +95,9 @@ export default function Dashboard() {
         setUserProfile(data.user)
         setApplicationHistory(data.applicationHistory || [])
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Unknown error'
-        setError(errorMsg)
-        setStats({
-          totalJobs: 0,
-          appliedJobs: 0,
-          interviews: 0,
-          assessments: 0,
-          rejections: 0,
-          offers: 0,
-          savedJobs: 0,
-          unreadNotifications: 0,
-          gmailConnected: false,
-          last24Hours: {
-            applicationsSubmitted: 0,
-            jobsFound: 0,
-            emailsReceived: 0,
-            interviewInvites: 0,
-            assessments: 0,
-            rejections: 0,
-            uniqueCompanies: 0,
-          },
-        })
+        // No default/demo numbers: show the real error instead.
+        setStats(null)
+        setError(err instanceof Error ? err.message : 'Unknown error')
       } finally {
         setLoading(false)
       }
@@ -127,7 +106,7 @@ export default function Dashboard() {
     if (session) {
       fetchDashboardData()
     }
-  }, [session])
+  }, [session, reloadKey])
 
   if (loading) {
     return (
@@ -141,7 +120,20 @@ export default function Dashboard() {
   }
 
   if (!stats) {
-    return <div className="p-8">No data available</div>
+    return (
+      <div className="p-8 max-w-2xl">
+        <div className="bg-red-50 border border-red-200 p-6 rounded-lg">
+          <h2 className="text-lg font-semibold text-red-900 mb-2">Could not load your dashboard</h2>
+          <p className="text-red-800 mb-4">{error || 'No data was returned.'}</p>
+          <button
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    )
   }
 
   const handleGmailConnect = () => {
@@ -202,12 +194,6 @@ export default function Dashboard() {
             <div className="mb-8 bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-center justify-between">
               <p className="text-blue-900">Upload your CV and confirm your skills to start finding and tracking jobs.</p>
               <Link href="/dashboard/profile" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Set up profile</Link>
-            </div>
-          )}
-          {error && (
-            <div className="mb-8 bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
-              <p className="text-yellow-800"><strong>⚠️ Warning:</strong> {error}</p>
-              <p className="text-yellow-700 text-sm mt-1">Dashboard is showing default values.</p>
             </div>
           )}
 
@@ -361,7 +347,7 @@ export default function Dashboard() {
                   ) : (
                     <tr>
                       <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
-                        {stats.gmailConnected
+                        {gmailStatus.connected
                           ? 'No job-related emails yet'
                           : 'Connect Gmail to see job-related emails'
                         }

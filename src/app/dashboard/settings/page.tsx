@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useSession, signIn, signOut } from 'next-auth/react'
+import { useGmailConnection } from '@/hooks/useGmailConnection'
 
 interface UserSettings {
   email: string
@@ -13,6 +14,7 @@ interface UserSettings {
 
 export default function SettingsPage() {
   const { data: session, update: updateSession } = useSession()
+  const gmail = useGmailConnection()
   const [settings, setSettings] = useState<UserSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -180,8 +182,8 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg mb-4">
           <div>
             <p className="font-medium text-gray-900">Gmail Status</p>
-            <p className={settings.gmailConnected ? 'text-green-600' : 'text-gray-600'}>
-              {settings.gmailConnected
+            <p className={gmail.connected ? 'text-green-600' : 'text-gray-600'}>
+              {gmail.connected
                 ? `✓ Google Connected: ${settings.email}`
                 : '✗ Not connected'}
             </p>
@@ -194,7 +196,7 @@ export default function SettingsPage() {
         </p>
 
         <div className="flex gap-4">
-          {settings.gmailConnected ? (
+          {gmail.connected ? (
             <button
               onClick={() => signOut({ callbackUrl: '/' })}
                             className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400"
@@ -212,7 +214,7 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {settings.gmailConnected && (
+        {gmail.connected && (
           <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-900">
               ℹ️ Your Gmail account is securely connected using OAuth 2.0. We only read emails

@@ -5,6 +5,8 @@ declare module 'next-auth' {
   interface Session {
     // Set when the Google token could not be refreshed; the user must sign in again.
     error?: string
+    // True while the cookie holds a usable Google grant (no tokens are exposed).
+    googleConnected?: boolean
   }
 }
 

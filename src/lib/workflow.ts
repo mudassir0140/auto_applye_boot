@@ -1,7 +1,7 @@
 import { prisma } from './prisma'
 import { parseJsonList } from './session'
 import type { CurrentUser } from './session'
-import { searchJobs, calculateJobMatchScore } from './jobs'
+import { searchJobs, calculateJobMatchScore, isRelevantJob } from './jobs'
 import { fetchJobRelatedEmails, classifyJobEmail, getGoogleAccount, isGmailConnected } from './gmail'
 import { applyToJob } from './apply'
 
@@ -14,7 +14,10 @@ export async function discoverJobsForUser(user: CurrentUser, overrides?: { keywo
 
   const found = await searchJobs(keywords, overrides?.location ?? locations[0])
   let added = 0
+  let relevant = 0
   for (const job of found) {
+    if (!isRelevantJob(job, skills, keywords)) continue
+    relevant++
     const matchScore = calculateJobMatchScore(job, skills, keywords)
     try {
       await prisma.job.create({
@@ -45,7 +48,7 @@ export async function discoverJobsForUser(user: CurrentUser, overrides?: { keywo
       data: { userId: user.id, type: 'jobs', title: 'New jobs found', message: `${added} new matching job(s) were added to your list.` },
     })
   }
-  return { found: found.length, added }
+  return { found: found.length, relevant, added }
 }
 
 const STATUS_BY_TYPE: Record<string, string> = {
