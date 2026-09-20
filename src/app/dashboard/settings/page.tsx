@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useSession, signIn } from 'next-auth/react'
+import { useSession, signIn, signOut } from 'next-auth/react'
 
 interface UserSettings {
   email: string
@@ -17,7 +17,6 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [gmailConnecting, setGmailConnecting] = useState(false)
-  const [gmailDisconnecting, setGmailDisconnecting] = useState(false)
 
   useEffect(() => {
     async function fetchSettings() {
@@ -79,30 +78,6 @@ export default function SettingsPage() {
       console.error('Gmail connection error:', error)
       alert('Failed to connect Gmail')
       setGmailConnecting(false)
-    }
-  }
-
-  async function handleDisconnectGmail() {
-    if (!confirm('Are you sure you want to disconnect Gmail? You can reconnect with a different account anytime.')) return
-
-    setGmailDisconnecting(true)
-    try {
-      const response = await fetch('/api/gmail/status', {
-        method: 'DELETE',
-      })
-
-      if (!response.ok) throw new Error('Failed to disconnect')
-
-      // Refresh settings after disconnecting
-      if (settings) {
-        setSettings({ ...settings, gmailConnected: false })
-      }
-      alert('Gmail disconnected successfully. You can connect a different account anytime.')
-    } catch (error) {
-      console.error('Disconnect error:', error)
-      alert('Failed to disconnect Gmail')
-    } finally {
-      setGmailDisconnecting(false)
     }
   }
 
@@ -221,11 +196,10 @@ export default function SettingsPage() {
         <div className="flex gap-4">
           {settings.gmailConnected ? (
             <button
-              onClick={handleDisconnectGmail}
-              disabled={gmailDisconnecting}
-              className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400"
+              onClick={() => signOut({ callbackUrl: '/' })}
+                            className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400"
             >
-              {gmailDisconnecting ? 'Disconnecting...' : 'Disconnect Google'}
+              Sign out
             </button>
           ) : (
             <button

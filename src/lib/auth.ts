@@ -1,15 +1,8 @@
 import type { NextAuthOptions } from 'next-auth'
+import type { JWT } from 'next-auth/jwt'
 import GoogleProvider from 'next-auth/providers/google'
-import { PrismaAdapter } from '@next-auth/prisma-adapter'
 import { prisma } from './prisma'
 
-function getBaseUrl() {
-  if (process.env.NEXTAUTH_URL) return process.env.NEXTAUTH_URL
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
-  return 'http://localhost:3000'
-}
-
-const baseUrl = getBaseUrl()
 const clientId = process.env.GOOGLE_CLIENT_ID
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET
 const secret = process.env.NEXTAUTH_SECRET
@@ -32,68 +25,140 @@ if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_APP_URL && 
   console.error(`[auth] NEXTAUTH_URL (${process.env.NEXTAUTH_URL}) differs from NEXT_PUBLIC_APP_URL (${process.env.NEXT_PUBLIC_APP_URL}); the OAuth state cookie will not match.`)
 }
 
+const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send'
+
+/**
+ * Exchange the refresh token for a new access token. Google does not rotate
+ * refresh tokens, so the existing one is kept. Returns the token with an
+ * `error` flag instead of throwing, so a dead grant shows up as "reconnect".
+ */
+export async function refreshGoogleAccessToken(token: JWT): Promise<JWT> {
+  if (!token.refresh_token) return { ...token, error: 'RefreshTokenMissing' }
+  try {
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId || '',
+        client_secret: clientSecret || '',
+        grant_type: 'refresh_token',
+        refresh_token: token.refresh_token,
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    return {
+      ...token,
+      access_token: data.access_token,
+      expires_at: Math.floor(Date.now() / 1000) + Number(data.expires_in ?? 3600),
+      refresh_token: data.refresh_token ?? token.refresh_token,
+      error: undefined,
+    }
+  } catch (error) {
+    console.error('[auth] failed to refresh Google access token:', error)
+    return { ...token, error: 'RefreshAccessTokenError' }
+  }
+}
+
+// Refresh a minute early so a token never expires mid-request.
+export const tokenIsExpired = (token: Pick<JWT, 'expires_at'>) =>
+  !!token.expires_at && Date.now() >= token.expires_at * 1000 - 60_000
+
+/**
+ * Save the Google account + tokens in MongoDB so Gmail keeps working after a
+ * restart, from the cron job, and for a returning user. Google only returns a
+ * refresh token on consent, so a stored one is never overwritten with nothing.
+ * Failures are logged, not thrown: the JWT session still logs the user in.
+ */
+async function persistGoogleAccount(
+  profile: { email?: string | null; name?: string | null; picture?: string | null },
+  account: { providerAccountId: string; access_token?: string; refresh_token?: string; expires_at?: number; scope?: string; token_type?: string; id_token?: string }
+): Promise<string | undefined> {
+  const email = profile.email?.toLowerCase()
+  if (!email) return undefined
+  try {
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: { ...(profile.name ? { name: profile.name } : {}), ...(profile.picture ? { image: profile.picture } : {}) },
+      create: { email, name: profile.name ?? null, image: profile.picture ?? null, emailVerified: new Date() },
+    })
+    const tokens = {
+      access_token: account.access_token ?? null,
+      expires_at: account.expires_at ?? null,
+      scope: account.scope ?? null,
+      token_type: account.token_type ?? null,
+      id_token: account.id_token ?? null,
+      ...(account.refresh_token ? { refresh_token: account.refresh_token } : {}),
+      disconnectedAt: null,
+    }
+    await prisma.account.upsert({
+      where: { provider_providerAccountId: { provider: 'google', providerAccountId: account.providerAccountId } },
+      update: { userId: user.id, ...tokens },
+      create: { userId: user.id, type: 'oauth', provider: 'google', providerAccountId: account.providerAccountId, refresh_token: account.refresh_token ?? null, ...tokens },
+    })
+    return user.id
+  } catch (error) {
+    console.error('[auth] failed to save Google account in MongoDB:', error)
+    return undefined
+  }
+}
+
+async function persistRefreshedToken(userId: string | undefined, token: JWT) {
+  if (!userId || !token.access_token || token.error) return
+  try {
+    await prisma.account.updateMany({
+      where: { userId, provider: 'google' },
+      data: { access_token: token.access_token, expires_at: token.expires_at ?? null },
+    })
+  } catch (error) {
+    console.error('[auth] failed to save refreshed token in MongoDB:', error)
+  }
+}
+
+// Session = signed JWT cookie (no adapter), so login survives refreshes and
+// restarts as long as NEXTAUTH_SECRET stays the same, and src/middleware.ts can
+// decode it with getToken(). The Google tokens are ALSO stored in MongoDB.
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
   providers: [
     GoogleProvider({
       clientId: clientId || '',
       clientSecret: clientSecret || '',
-      // Google is the only provider and verifies email ownership, so re-linking a
-      // returning user's Google account to their existing Boot user is safe.
-      // Without this, a user whose Account row was lost gets OAuthAccountNotLinked.
-      allowDangerousEmailAccountLinking: true,
       authorization: {
         params: {
           prompt: 'consent',
           access_type: 'offline',
-          scope: 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send',
+          scope: GOOGLE_SCOPE,
         },
-      },
-      profile(profile) {
-        return {
-          id: profile.sub,
-          name: profile.name,
-          email: profile.email,
-          image: profile.picture,
-        }
       },
     }),
   ],
   callbacks: {
-    // Runs on every request. `user`/`account` are only populated on the
-    // initial sign-in — that's when we copy the Prisma User id and Google
-    // profile picture onto the token so they survive for the life of the
-    // session (the JWT cookie), without a database lookup on every request.
-    async jwt({ token, user, account }) {
-      if (user) {
-        token.id = user.id
-        token.picture = user.image
+    async jwt({ token, account, profile }) {
+      // `account` is only set on the initial sign-in.
+      if (account?.provider === 'google') {
+        const id = await persistGoogleAccount(profile ?? { email: token.email, name: token.name, picture: token.picture }, account)
+        return {
+          ...token,
+          id,
+          access_token: account.access_token,
+          refresh_token: account.refresh_token ?? token.refresh_token,
+          expires_at: account.expires_at,
+          error: undefined,
+        }
       }
-      if (account?.provider) {
-        token.provider = account.provider
+      if (token.access_token && tokenIsExpired(token)) {
+        const refreshed = await refreshGoogleAccessToken(token)
+        await persistRefreshedToken(token.id, refreshed)
+        return refreshed
       }
       return token
     },
-    // With strategy: 'jwt', session() receives `token`, not `user` — read the
-    // id/picture back off the token instead of doing a per-request DB call.
+    // Tokens stay in the cookie / server; the browser only learns whether the
+    // Google connection is healthy.
     async session({ session, token }) {
-      if (session.user && token.id) {
-        (session.user as any).id = token.id as string
-        if (token.picture) {
-          session.user.image = token.picture as string
-        }
-      }
+      if (session.user && token.id) (session.user as { id?: string }).id = token.id
+      session.error = token.error
       return session
-    },
-    async signIn({ user, account }) {
-      // PrismaAdapter creates/links the User + Account rows (with Google's
-      // access/refresh tokens) before this callback runs. Refuse to issue a
-      // session if that somehow didn't happen.
-      if (!user?.id) {
-        console.error('[auth] signIn blocked: adapter returned no user id for provider', account?.provider)
-        return false
-      }
-      return true
     },
     async redirect({ url, baseUrl }) {
       if (url.startsWith(baseUrl)) return url
@@ -101,73 +166,15 @@ export const authOptions: NextAuthOptions = {
       return baseUrl
     },
   },
-  events: {
-    // NextAuth only writes Account tokens the first time a Google account is
-    // linked. On every later sign-in Google issues fresh tokens, so persist
-    // them here — otherwise the DB keeps a stale access token and Gmail shows
-    // "not connected" after re-login.
-    async signIn({ user, account, profile }) {
-      if (account?.provider !== 'google' || !user?.id) return
-      try {
-        await prisma.account.updateMany({
-          where: {
-            userId: user.id,
-            provider: 'google',
-            providerAccountId: account.providerAccountId,
-          },
-          data: {
-            access_token: account.access_token ?? null,
-            expires_at: account.expires_at ?? null,
-            scope: account.scope ?? null,
-            token_type: account.token_type ?? null,
-            id_token: account.id_token ?? null,
-            // Google only returns a refresh token on consent; never overwrite
-            // a stored one with undefined.
-            ...(account.refresh_token ? { refresh_token: account.refresh_token } : {}),
-            disconnectedAt: null,
-          },
-        })
-        const p = profile as { name?: string; picture?: string } | undefined
-        await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            ...(p?.name ? { name: p.name } : {}),
-            ...(p?.picture ? { image: p.picture } : {}),
-          },
-        })
-      } catch (error) {
-        console.error('[auth] failed to persist Google tokens on sign-in:', error)
-      }
-    },
-  },
   pages: {
     signIn: '/',
     error: '/auth/error',
   },
-  // IMPORTANT: session strategy must be 'jwt', not 'database'.
-  //
-  // src/middleware.ts uses next-auth/middleware's withAuth(), which protects
-  // /dashboard/* by calling getToken() to decode the session cookie as a JWT.
-  // getToken() CANNOT read database-strategy sessions — that cookie is just
-  // an opaque lookup key, not a JWT — so it silently returned null, meaning
-  // `authorized: ({ token }) => !!token` was always false and the middleware
-  // redirected every successfully-authenticated user straight back to the
-  // sign-in page before the dashboard ever rendered. That was the actual
-  // root cause of "Google login succeeds but Boot still shows Sign in with
-  // Google": the user never even reached /dashboard for the connected state
-  // to show up.
-  //
-  // PrismaAdapter still creates/links the User + Account rows (with Google's
-  // access_token/refresh_token) on every sign-in regardless of session
-  // strategy, so this only changes how the Boot login session itself is
-  // stored (a signed JWT cookie instead of a Session row) — not how the
-  // Google account is saved. The JWT cookie is still persistent (maxAge
-  // below), so it survives page refresh and closing/reopening the browser,
-  // and is only cleared by an explicit signOut() (Logout button).
   session: {
     strategy: 'jwt',
     maxAge: 30 * 24 * 60 * 60,
   },
+  jwt: { maxAge: 30 * 24 * 60 * 60 },
   secret,
   debug: process.env.NODE_ENV === 'development',
 }

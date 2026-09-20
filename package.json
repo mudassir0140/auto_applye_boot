@@ -22,7 +22,6 @@
   "author": "Job Application AI Agent",
   "license": "MIT",
   "dependencies": {
-    "@next-auth/prisma-adapter": "^1.0.0",
     "@prisma/client": "^5.7.0",
     "@swc/helpers": "^0.5.0",
     "autoprefixer": "^10.4.0",

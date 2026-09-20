@@ -1,24 +1,16 @@
 'use client'
 
-import { useSession, signIn } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
+import { useSession, signIn, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 export default function Home() {
   const { data: session, status } = useSession()
-  const router = useRouter()
   const [authError, setAuthError] = useState<string | null>(null)
 
   useEffect(() => {
     setAuthError(new URLSearchParams(window.location.search).get('error'))
   }, [])
-
-  useEffect(() => {
-    if (status === 'authenticated') {
-      router.push('/dashboard')
-    }
-  }, [status, router])
 
   if (status === 'loading') {
     return <div className="flex items-center justify-center h-screen">Loading...</div>
@@ -43,12 +35,32 @@ export default function Home() {
           )}
 
           <div className="space-y-4">
-            <button
-              onClick={() => signIn('google', { callbackUrl: '/dashboard', redirect: true })}
-              className="inline-block px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition"
-            >
-              Sign in with Google
-            </button>
+            {status === 'authenticated' ? (
+              <>
+                <p className="text-lg font-medium text-gray-900">Connected: {session?.user?.email}</p>
+                {session?.error && (
+                  <p className="text-red-600" role="alert">Your Google connection expired. Please sign in again.</p>
+                )}
+                <div className="flex items-center justify-center gap-3">
+                  <Link href="/dashboard" className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition">
+                    Open dashboard
+                  </Link>
+                  <button
+                    onClick={() => signOut({ callbackUrl: '/' })}
+                    className="px-8 py-3 bg-white text-gray-800 font-semibold rounded-lg border border-gray-300 hover:bg-gray-50 transition"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button
+                onClick={() => signIn('google', { callbackUrl: '/dashboard', redirect: true })}
+                className="inline-block px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition"
+              >
+                Sign in with Google
+              </button>
+            )}
           </div>
 
           <div className="mt-16 grid md:grid-cols-3 gap-8 max-w-4xl mx-auto">

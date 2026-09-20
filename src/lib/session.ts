@@ -17,8 +17,18 @@ export function isObjectId(value: unknown): value is string {
 export async function getCurrentUser() {
   const session = await getServerSession(authOptions)
   const id = (session?.user as { id?: string } | undefined)?.id
-  if (!isObjectId(id)) return null
-  return prisma.user.findUnique({ where: { id } })
+  if (isObjectId(id)) {
+    const user = await prisma.user.findUnique({ where: { id } })
+    if (user) return user
+  }
+  // Session predates the DB row (MongoDB was unreachable at sign-in): resolve by email.
+  const email = session?.user?.email?.toLowerCase()
+  if (!email) return null
+  return prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: { email, name: session?.user?.name ?? null, image: session?.user?.image ?? null },
+  })
 }
 
 export type CurrentUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>

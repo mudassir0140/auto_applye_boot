@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useSession, signIn } from 'next-auth/react'
+import { useSession, signIn, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { useGmailConnection } from '@/hooks/useGmailConnection'
 
@@ -148,25 +148,6 @@ export default function Dashboard() {
     signIn('google', { callbackUrl: '/dashboard' })
   }
 
-  const handleGmailDisconnect = async () => {
-    if (confirm('Are you sure you want to disconnect Gmail?')) {
-      try {
-        const response = await fetch('/api/gmail/disconnect', {
-          method: 'POST',
-        })
-        if (response.ok) {
-          await gmailStatus.refetch()
-          alert('Gmail account disconnected')
-        } else {
-          alert('Failed to disconnect Gmail')
-        }
-      } catch (error) {
-        console.error('Disconnect error:', error)
-        alert('Error disconnecting Gmail')
-      }
-    }
-  }
-
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top Header */}
@@ -191,14 +172,13 @@ export default function Dashboard() {
               <div className="flex items-center gap-3 px-4 py-2 bg-green-50 rounded-lg border border-green-200">
                 <span className="text-lg">✅</span>
                 <div className="text-sm">
-                  <p className="font-medium text-green-900">Gmail Connected</p>
-                  <p className="text-green-700 text-xs">{gmailStatus.email}</p>
+                  <p className="font-medium text-green-900">Connected: {gmailStatus.email}</p>
                 </div>
                 <button
-                  onClick={handleGmailDisconnect}
+                  onClick={() => signOut({ callbackUrl: '/' })}
                   className="ml-2 text-xs px-2 py-1 text-red-600 hover:bg-red-100 rounded transition"
                 >
-                  Disconnect
+                  Sign out
                 </button>
               </div>
             ) : (
@@ -208,7 +188,7 @@ export default function Dashboard() {
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition"
               >
                 <span>📧</span>
-                <span>{gmailStatus.loading ? 'Checking...' : 'Connect Gmail'}</span>
+                <span>{gmailStatus.loading ? 'Checking...' : 'Sign in with Google'}</span>
               </button>
             )}
           </div>

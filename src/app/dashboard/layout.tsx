@@ -108,13 +108,13 @@ export default function DashboardLayout({
             </div>
           </div>
 
-          {/* Logout Button */}
+          {/* Sign out Button */}
           <button
             onClick={() => signOut({ redirect: true })}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-red-600 hover:bg-red-50 rounded-lg transition font-medium text-sm"
           >
             <span>🚪</span>
-            <span>Logout</span>
+            <span>Sign out</span>
           </button>
         </div>
       </div>
