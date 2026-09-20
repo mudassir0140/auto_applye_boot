@@ -22,9 +22,17 @@ if (process.env.NEXT_PHASE !== 'phase-production-build' && !isMongoUrl) {
   )
 }
 
+// Fail fast (instead of Prisma's 30s default) when Atlas is unreachable, so the
+// dashboard can show the real error quickly.
+function withTimeouts(url: string) {
+  if (!isMongoUrl || /serverSelectionTimeoutMS=/i.test(url)) return url
+  return url + (url.includes('?') ? '&' : '?') + 'serverSelectionTimeoutMS=10000&connectTimeoutMS=10000'
+}
+
 export const prisma =
   globalForPrisma.prisma ||
   new PrismaClient({
+    ...(isMongoUrl ? { datasources: { db: { url: withTimeouts(databaseUrl) } } } : {}),
     log: process.env.NODE_ENV === 'development'
       ? [
           { emit: 'stdout', level: 'query' },

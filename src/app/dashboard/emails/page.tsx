@@ -28,6 +28,7 @@ export default function EmailsPage() {
   const { data: session } = useSession()
   const [emails, setEmails] = useState<JobEmail[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [filter, setFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -35,12 +36,13 @@ export default function EmailsPage() {
   async function fetchEmails() {
     try {
       const response = await fetch('/api/dashboard/stats')
-      if (!response.ok) throw new Error('Failed to fetch emails')
-      const data = await response.json()
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || data.error || 'Failed to fetch emails')
+      setLoadError(null)
       setEmails(data.recentEmails || [])
     } catch (error) {
       console.error('Fetch error:', error)
-      setEmails([])
+      setLoadError(error instanceof Error ? error.message : 'Failed to fetch emails')
     } finally {
       setLoading(false)
     }
@@ -91,6 +93,9 @@ export default function EmailsPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
+      {loadError && (
+        <div className="mx-8 mt-4 bg-red-50 border border-red-200 p-4 rounded-lg text-red-800">{loadError}</div>
+      )}
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-8 py-6">
         <div className="flex items-center justify-between">

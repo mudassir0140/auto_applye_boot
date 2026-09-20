@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentUser, unauthorized, parseJsonList } from '@/lib/session'
 import { getGoogleAccount, isGmailConnected } from '@/lib/gmail'
+import { databaseErrorResponse } from '@/lib/db-error'
 import { get24HourActivityStats, getApplicationHistory } from '@/lib/application-cooldown'
 
 export const dynamic = 'force-dynamic'
@@ -101,10 +102,7 @@ export async function GET() {
       },
     })
   } catch (error) {
-    console.error('Dashboard stats error:', error)
-    return NextResponse.json(
-      { error: 'Failed to get dashboard stats' },
-      { status: 500 }
-    )
+    return databaseErrorResponse(error, 'dashboard/stats')
+
   }
 }

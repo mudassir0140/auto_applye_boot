@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Lets `NEXT_DIST_DIR=.next-build npm run build` run without clobbering a live dev server's .next
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   swcMinify: true,
   experimental: {
     // Native/CJS parsers must not be bundled by webpack.

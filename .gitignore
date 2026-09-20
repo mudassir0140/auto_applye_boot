@@ -42,3 +42,6 @@ prisma/dev.db
 prisma/dev.db-journal
 prisma/**/*.db
 prisma/**/*.db-journal
+/.next-build/
+dev-server.log
+tsconfig.tsbuildinfo

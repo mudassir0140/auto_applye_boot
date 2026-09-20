@@ -27,6 +27,7 @@ export default function ApplicationsPage() {
   const { data: session } = useSession()
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -36,12 +37,13 @@ export default function ApplicationsPage() {
     async function fetchApplications() {
       try {
         const response = await fetch('/api/dashboard/stats')
-        if (!response.ok) throw new Error('Failed to fetch applications')
-        const data = await response.json()
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.message || data.error || 'Failed to fetch applications')
+        setLoadError(null)
         setApplications(data.recentApplications || [])
       } catch (error) {
         console.error('Fetch error:', error)
-        setApplications([])
+        setLoadError(error instanceof Error ? error.message : 'Failed to fetch applications')
       } finally {
         setLoading(false)
       }
@@ -69,6 +71,9 @@ export default function ApplicationsPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
+      {loadError && (
+        <div className="mx-8 mt-4 bg-red-50 border border-red-200 p-4 rounded-lg text-red-800">{loadError}</div>
+      )}
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-8 py-6">
         <h1 className="text-3xl font-bold text-gray-900">Applications</h1>
