@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { getCurrentUser } from '@/lib/session'
 import { persistGoogleAccount } from '@/lib/auth'
+import { databaseErrorResponse } from '@/lib/db-error'
 import { getGoogleAccount, isGmailConnected } from '@/lib/gmail'
 
 export const dynamic = 'force-dynamic'
@@ -42,7 +43,6 @@ export async function GET(req: NextRequest) {
       },
     })
   } catch (error) {
-    console.error('[/api/me] Error:', error)
-    return NextResponse.json({ error: 'Failed to check connection status', connected: false }, { status: 500 })
+    return databaseErrorResponse(error, 'api/me')
   }
 }

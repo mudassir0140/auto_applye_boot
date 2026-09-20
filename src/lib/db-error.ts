@@ -23,10 +23,10 @@ export function databaseErrorResponse(error: unknown, context: string) {
         error: 'Database unreachable',
         code: 'database_unreachable',
         message:
-          'Boot cannot reach MongoDB Atlas. In Atlas → Network Access, allow this machine\'s IP (or 0.0.0.0/0), and check the cluster is running.',
+          'Boot cannot reach MongoDB Atlas. In Atlas > Network Access, allow this machine\'s IP (or 0.0.0.0/0), and check the cluster is not paused.',
       },
       { status: 503 }
     )
   }
-  return NextResponse.json({ error: 'Failed to load dashboard data', code: 'internal' }, { status: 500 })
+  return NextResponse.json({ error: 'Request failed', code: 'internal', message: `Unexpected server error (${context}). Check the server log.` }, { status: 500 })
 }
