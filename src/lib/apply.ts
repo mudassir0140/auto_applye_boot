@@ -12,6 +12,15 @@ import {
   GmailNotConnectedError,
 } from './gmail'
 
+/** Set when the application comes from company discovery (Google Maps / Search) instead of a job board. */
+export interface CompanyContext {
+  companyId: string
+  website: string
+  source: string
+  /** true = no specific opening: a general frontend / internship inquiry. */
+  inquiry: boolean
+}
+
 export type ApplyFailureCode =
   | 'already_applied'
   | 'cooldown'
@@ -60,7 +69,7 @@ export const BLOCKING_APPLY_FAILURES: ApplyFailureCode[] = ['gmail_not_connected
 export async function applyToJob(
   user: CurrentUser,
   jobId: string,
-  opts: { method: 'email' | 'manual'; recipientEmail?: string | null }
+  opts: { method: 'email' | 'manual'; recipientEmail?: string | null; company?: CompanyContext }
 ): Promise<ApplyResult> {
   const job = await prisma.job.findFirst({ where: { id: jobId, userId: user.id } })
   if (!job) return { ok: false, code: 'not_found', message: 'Job not found' }
@@ -124,6 +133,7 @@ export async function applyToJob(
         cvUrl: user.cvUrl,
         portfolioUrl: user.portfolioUrl,
         hasAttachment: !!cv,
+        inquiry: opts.company?.inquiry,
       })
       content.to = recipient
       if (cv) content.attachment = { fileName: cv.fileName, contentType: cv.contentType, data: Buffer.from(cv.data) }
@@ -150,6 +160,9 @@ export async function applyToJob(
             cvUrl: user.cvUrl,
             portfolioUrl: user.portfolioUrl,
             status: 'sent',
+            ...(opts.company
+              ? { companyId: opts.company.companyId, website: opts.company.website, source: opts.company.source, emailKind: opts.company.inquiry ? 'inquiry' : 'application' }
+              : { source: job.source, emailKind: 'application' }),
           },
         })
         .catch((err) => console.error('[apply] email was sent but saving SentEmail failed:', err))

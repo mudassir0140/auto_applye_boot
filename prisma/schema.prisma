@@ -51,6 +51,7 @@ model User {
   applications        JobApplication[]
   applicationHistory  ApplicationHistory[]
   sentEmails          SentEmail[]
+  companies           Company[]
   emails              JobEmail[]
   notifications       Notification[]
 }
@@ -211,6 +212,10 @@ model SentEmail {
   company        String?
   jobTitle       String?
   fromEmail      String?
+  companyId      String?  @db.ObjectId
+  website        String?
+  source         String?  // google_maps | google_search | job_board ...
+  emailKind      String?  // application (a real opening) | inquiry (no specific opening)
   cvFileName     String?  // CV attached to the email, if a file was uploaded
   cvUrl          String?  // CV link included in the email body
   portfolioUrl   String?
@@ -268,4 +273,34 @@ model Notification {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, read])
+}
+
+// Software houses / IT companies found through Google Maps (Places API) or Google Search
+// (Custom Search API), then checked on their own website for openings and a public contact email.
+model Company {
+  id                 String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId             String    @db.ObjectId
+  name               String
+  website            String
+  domain             String
+  source             String    // google_maps | google_search | manual
+  sourceRef          String?   // Google place id / search result URL
+  address            String?
+  careersUrl         String?
+  contactEmail       String?   // public business address found on the company's own site (never guessed)
+  contactEmailFrom   String?   // page the address was found on
+  openingTitle       String?   // relevant opening found on the careers page
+  openingUrl         String?
+  // discovered | no_openings_no_email | job_found_no_email | contacted | failed | site_unreachable
+  status             String    @default("discovered")
+  statusMessage      String?
+  scannedAt          DateTime?
+  contactedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, domain])
+  @@index([userId, status])
 }

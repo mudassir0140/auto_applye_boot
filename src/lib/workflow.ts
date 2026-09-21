@@ -305,6 +305,10 @@ export async function runWorkflowForUser(user: CurrentUser) {
   try {
     summary.jobs = await discoverJobsForUser(user)
     summary.apply = await autoApplyForUser(user)
+    if (user.autoApplyEnabled) {
+      const { runCompanyOutreach } = await import('./company-outreach')
+      summary.companies = await runCompanyOutreach(user)
+    }
     const usable = await gmailUsable(user.id)
     if (usable.ok) summary.gmail = await syncGmailForUser(user)
     else summary.gmail = { skipped: usable.reason }

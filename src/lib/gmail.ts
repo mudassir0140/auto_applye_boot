@@ -470,20 +470,26 @@ export function generateApplicationEmail(opts: {
   cvUrl: string | null
   portfolioUrl: string | null
   hasAttachment: boolean
+  /** No specific opening: ask whether a junior frontend / internship position is available. */
+  inquiry?: boolean
 }): EmailContent {
-  const { jobTitle, company, userName, userEmail, skills, cvUrl, portfolioUrl, hasAttachment } = opts
+  const { jobTitle, company, userName, userEmail, skills, cvUrl, portfolioUrl, hasAttachment, inquiry } = opts
   const skillLine = skills.length ? `My core skills include ${skills.slice(0, 8).join(', ')}.` : ''
 
   const lines = [
     'Dear Hiring Team,',
     '',
-    `I am writing to apply for the ${jobTitle} position at ${company}. ${skillLine}`.trim(),
+    inquiry
+      ? `I am a frontend developer and I am writing to ask whether ${company} has, or expects to have, an opening for a Junior Frontend / React / Next.js Developer or an internship. ${skillLine}`.trim()
+      : `I am writing to apply for the ${jobTitle} position at ${company}. ${skillLine}`.trim(),
     '',
     hasAttachment ? 'My CV is attached to this email.' : '',
     cvUrl ? `CV: ${cvUrl}` : '',
     portfolioUrl ? `Portfolio: ${portfolioUrl}` : '',
     '',
-    'Thank you for your time and consideration. I would welcome the chance to discuss the role.',
+    inquiry
+      ? 'If there is a suitable opportunity now or in the future, I would be glad to share more about my work. Thank you for your time.'
+      : 'Thank you for your time and consideration. I would welcome the chance to discuss the role.',
     '',
     'Best regards,',
     userName,
@@ -495,5 +501,5 @@ export function generateApplicationEmail(opts: {
     .map((l) => (l ? `<p style="margin:0 0 8px">${escapeHtml(l)}</p>` : '<br>'))
     .join('')}</div>`
 
-  return { to: '', subject: `Application for ${jobTitle} – ${userName}`, bodyPlain, bodyHtml }
+  return { to: '', subject: inquiry ? `Frontend Developer / Internship Inquiry – ${userName}` : `Application for ${jobTitle} – ${userName}`, bodyPlain, bodyHtml }
 }
