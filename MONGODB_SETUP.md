@@ -33,7 +33,6 @@ npm run prisma:push      # prisma db push (MongoDB has no migrations)
 - Authorized redirect URI: `<NEXTAUTH_URL>/api/auth/callback/google`
 
 ## Background processing
-`vercel.json` schedules `GET /api/cron/run` every 6 hours (Vercel sends `Authorization: Bearer $CRON_SECRET`).
+`vercel.json` schedules `GET /api/cron/run` once a day at 09:00 UTC (the most frequent schedule Vercel Hobby allows) (Vercel sends `Authorization: Bearer $CRON_SECRET`).
 For each user who confirmed their profile it: finds jobs → (optionally) emails applications from that
 user's Gmail → reads job-related Gmail → updates interview / assessment / rejection / offer status.
-Vercel Hobby plans only allow daily crons; change the schedule to `0 8 * * *` if the deploy is rejected.
