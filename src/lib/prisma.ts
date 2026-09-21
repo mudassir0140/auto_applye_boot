@@ -33,9 +33,9 @@ export const prisma =
   globalForPrisma.prisma ||
   new PrismaClient({
     ...(isMongoUrl ? { datasources: { db: { url: withTimeouts(databaseUrl) } } } : {}),
+    // No 'query' logging: it printed every query to the console on each request in dev.
     log: process.env.NODE_ENV === 'development'
       ? [
-          { emit: 'stdout', level: 'query' },
           { emit: 'stdout', level: 'error' },
           { emit: 'stdout', level: 'warn' },
         ]

@@ -1,93 +1,95 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getCurrentUser, unauthorized, parseJsonList } from '@/lib/session'
-import { getGoogleAccount, isGmailConnected } from '@/lib/gmail'
+import { getCurrentUserWithGoogle, unauthorized, parseJsonList } from '@/lib/session'
+import { isGmailConnected } from '@/lib/gmail'
 import { databaseErrorResponse } from '@/lib/db-error'
-import { get24HourActivityStats, getApplicationHistory } from '@/lib/application-cooldown'
 
 export const dynamic = 'force-dynamic'
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
 export async function GET() {
   try {
-    const user = await getCurrentUser()
-    if (!user) return unauthorized()
-    const googleAccount = await getGoogleAccount(user.id)
+    // Stage 1: user + Google account in parallel.
+    const current = await getCurrentUserWithGoogle()
+    if (!current) return unauthorized()
+    const { user, googleAccount } = current
+    const userId = user.id
 
-    // Get all stats
+    const now = Date.now()
+    const last24h = new Date(now - DAY_MS)
+    const last7d = new Date(now - 7 * DAY_MS)
+
+    // Stage 2: everything else in parallel (11 queries; was 19 in 3 sequential stages).
     const [
       totalJobs,
       appliedJobs,
-      interviews,
-      assessments,
-      rejections,
-      offers,
       savedJobs,
+      jobsFound24h,
       unreadNotifications,
+      statusGroups,
+      emailGroups24h,
       recentApplications,
       recentEmails,
-      last24Hours,
-      applicationHistory,
+      history7d,
     ] = await Promise.all([
-      prisma.job.count({ where: { userId: user.id } }),
-      prisma.job.count({ where: { userId: user.id, applied: true } }),
-      prisma.jobApplication.count({
-        where: { userId: user.id, status: 'interview' },
-      }),
-      prisma.jobApplication.count({
-        where: { userId: user.id, status: 'assessment' },
-      }),
-      prisma.jobApplication.count({
-        where: { userId: user.id, status: 'rejected' },
-      }),
-      prisma.jobApplication.count({
-        where: { userId: user.id, status: 'offer' },
-      }),
-      prisma.job.count({ where: { userId: user.id, savedAt: { not: null } } }),
-      prisma.notification.count({
-        where: { userId: user.id, read: false },
-      }),
+      prisma.job.count({ where: { userId } }),
+      prisma.job.count({ where: { userId, applied: true } }),
+      prisma.job.count({ where: { userId, savedAt: { not: null } } }),
+      prisma.job.count({ where: { userId, foundAt: { gte: last24h } } }),
+      prisma.notification.count({ where: { userId, read: false } }),
+      prisma.jobApplication.groupBy({ by: ['status'], where: { userId }, _count: { _all: true } }),
+      prisma.jobEmail.groupBy({ by: ['emailType'], where: { userId, receivedAt: { gte: last24h } }, _count: { _all: true } }),
       prisma.jobApplication.findMany({
-        where: { userId: user.id },
+        where: { userId },
         orderBy: { appliedAt: 'desc' },
         take: 5,
-        include: { job: true },
+        include: { job: { select: { id: true, title: true, company: true, url: true, location: true } } },
       }),
       prisma.jobEmail.findMany({
-        where: { userId: user.id },
+        where: { userId },
         orderBy: { receivedAt: 'desc' },
         take: 5,
+        select: { id: true, from: true, subject: true, emailType: true, receivedAt: true, isRead: true },
       }),
-      get24HourActivityStats(user.id),
-      getApplicationHistory(user.id, 10, 7), // Last 7 days
+      // One query serves both the 7-day history list and the 24h activity numbers.
+      prisma.applicationHistory.findMany({
+        where: { userId, appliedAt: { gte: last7d } },
+        orderBy: { appliedAt: 'desc' },
+        take: 200,
+        select: { id: true, company: true, jobTitle: true, appliedAt: true, status: true, method: true },
+      }),
     ])
 
+    const applicationsByStatus = (s: string) => statusGroups.find((g) => g.status === s)?._count._all ?? 0
+    const emailsByType = (t: string) => emailGroups24h.find((g) => g.emailType === t)?._count._all ?? 0
+    const history24h = history7d.filter((h) => h.appliedAt.getTime() >= last24h.getTime())
     const gmailConnected = isGmailConnected(googleAccount)
 
     return NextResponse.json({
       stats: {
         totalJobs,
         appliedJobs,
-        interviews,
-        assessments,
-        rejections,
-        offers,
+        interviews: applicationsByStatus('interview'),
+        assessments: applicationsByStatus('assessment'),
+        rejections: applicationsByStatus('rejected'),
+        offers: applicationsByStatus('offer'),
         savedJobs,
         unreadNotifications,
         gmailConnected,
-        // 24-hour stats
         last24Hours: {
-          applicationsSubmitted: last24Hours.applicationsSubmitted,
-          jobsFound: last24Hours.jobsFound,
-          emailsReceived: last24Hours.emailsReceived,
-          interviewInvites: last24Hours.interviewInvites,
-          assessments: last24Hours.assessments,
-          rejections: last24Hours.rejections,
-          uniqueCompanies: last24Hours.uniqueCompanies,
+          applicationsSubmitted: history24h.length,
+          jobsFound: jobsFound24h,
+          emailsReceived: emailGroups24h.reduce((n, g) => n + g._count._all, 0),
+          interviewInvites: emailsByType('interview'),
+          assessments: emailsByType('assessment'),
+          rejections: emailsByType('rejection'),
+          uniqueCompanies: new Set(history24h.map((h) => h.company)).size,
         },
       },
       recentApplications,
       recentEmails,
-      applicationHistory,
+      applicationHistory: history7d.slice(0, 10),
       user: {
         email: user.email,
         name: user.name,
@@ -103,6 +105,5 @@ export async function GET() {
     })
   } catch (error) {
     return databaseErrorResponse(error, 'dashboard/stats')
-
   }
 }

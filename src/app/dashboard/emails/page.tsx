@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useSession } from 'next-auth/react'
 import Link from 'next/link'
+import { useCachedFetch } from '@/hooks/useCachedFetch'
 
 interface JobEmail {
   id: string
@@ -26,33 +27,14 @@ const EMAIL_TYPE_COLORS = {
 
 export default function EmailsPage() {
   const { data: session } = useSession()
-  const [emails, setEmails] = useState<JobEmail[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  // Key effects on this boolean, not the session object: NextAuth hands back a new
+  // object on every refetch (tab focus), which used to re-run every page fetch.
+  const authenticated = !!session
+  const { data, error: loadError, loading, reload: fetchEmails } = useCachedFetch<{ emails: JobEmail[] }>('/api/emails', authenticated)
+  const emails = data?.emails || []
   const [syncing, setSyncing] = useState(false)
   const [filter, setFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
-
-  async function fetchEmails() {
-    try {
-      const response = await fetch('/api/dashboard/stats')
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.message || data.error || 'Failed to fetch emails')
-      setLoadError(null)
-      setEmails(data.recentEmails || [])
-    } catch (error) {
-      console.error('Fetch error:', error)
-      setLoadError(error instanceof Error ? error.message : 'Failed to fetch emails')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (session) {
-      fetchEmails()
-    }
-  }, [session])
 
   async function syncEmails() {
     setSyncing(true)
@@ -62,9 +44,9 @@ export default function EmailsPage() {
       })
 
       if (!response.ok) throw new Error('Sync failed')
-      const data = await response.json()
+      const result = await response.json()
       await fetchEmails()
-      alert(`Synced ${data.emailsSync || 0} emails`)
+      alert(`Synced ${result.emailsSync || 0} emails`)
     } catch (error) {
       console.error('Sync error:', error)
       alert('Failed to sync emails. Make sure Gmail is connected.')

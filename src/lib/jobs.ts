@@ -41,6 +41,19 @@ export function extractApplyEmail(text: string): string | undefined {
   return matches.find((m) => !BAD_EMAIL.test(m))?.toLowerCase()
 }
 
+// Arbeitnow and RemoteOK return their WHOLE feed regardless of keyword. It used to be
+// downloaded again for every keyword (up to 5x per search); now it is fetched once and
+// reused for a few minutes (also by repeated searches / the cron run).
+const feedCache = new Map<string, { at: number; data: Promise<any> }>()
+function cachedFeed(url: string): Promise<any> {
+  const hit = feedCache.get(url)
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.data
+  const data = axios.get(url, HTTP).then((r) => r.data)
+  feedCache.set(url, { at: Date.now(), data })
+  data.catch(() => feedCache.delete(url))
+  return data
+}
+
 async function fromRemotive(keyword: string): Promise<FoundJob[]> {
   const { data } = await axios.get('https://remotive.com/api/remote-jobs', { ...HTTP, params: { search: keyword, limit: 30 } })
   return (data.jobs || []).map((j: any): FoundJob => {
@@ -61,7 +74,7 @@ async function fromRemotive(keyword: string): Promise<FoundJob[]> {
 }
 
 async function fromArbeitnow(keyword: string): Promise<FoundJob[]> {
-  const { data } = await axios.get('https://www.arbeitnow.com/api/job-board-api', HTTP)
+  const data = await cachedFeed('https://www.arbeitnow.com/api/job-board-api')
   const kw = keyword.toLowerCase()
   return (data.data || [])
     .filter((j: any) => `${j.title} ${(j.tags || []).join(' ')} ${j.description || ''}`.toLowerCase().includes(kw))
@@ -82,7 +95,7 @@ async function fromArbeitnow(keyword: string): Promise<FoundJob[]> {
 }
 
 async function fromRemoteOk(keyword: string): Promise<FoundJob[]> {
-  const { data } = await axios.get('https://remoteok.com/api', HTTP)
+  const data = await cachedFeed('https://remoteok.com/api')
   const kw = keyword.toLowerCase()
   return (Array.isArray(data) ? data : [])
     .filter((j: any) => j.position && j.url && `${j.position} ${(j.tags || []).join(' ')}`.toLowerCase().includes(kw))
@@ -106,8 +119,10 @@ export async function searchJobs(keywords: string[], location?: string): Promise
   const out = new Map<string, FoundJob>()
   const loc = location?.toLowerCase().trim()
 
-  for (const keyword of keywords.slice(0, 5)) {
-    const results = await Promise.allSettled([fromRemotive(keyword), fromArbeitnow(keyword), fromRemoteOk(keyword)])
+  const perKeyword = await Promise.all(
+    keywords.slice(0, 5).map((keyword) => Promise.allSettled([fromRemotive(keyword), fromArbeitnow(keyword), fromRemoteOk(keyword)]))
+  )
+  for (const results of perKeyword) {
     for (const r of results) {
       if (r.status === 'rejected') {
         console.error('[jobs] source failed:', r.reason?.message || r.reason)

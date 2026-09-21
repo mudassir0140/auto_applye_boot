@@ -16,7 +16,7 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (status === 'unauthenticated') {
-      router.push('/')
+      router.replace('/')
     }
   }, [status, router])
 
@@ -39,14 +39,17 @@ export default function DashboardLayout({
     return null
   }
 
-  const isActive = (href: string) => pathname === href
+  const isActive = (href: string) =>
+    href === '/dashboard' ? pathname === href : pathname === href || !!pathname?.startsWith(href + '/')
 
   const navItems = [
     { href: '/dashboard', icon: '📊', label: 'Dashboard' },
-    { href: '/dashboard/profile', icon: '👤', label: 'Profile' },
+    { href: '/dashboard/profile', icon: '👤', label: 'Profile / Resume' },
+    { href: '/dashboard/preferences', icon: '🎯', label: 'Job Preferences' },
     { href: '/dashboard/jobs', icon: '💼', label: 'Jobs' },
     { href: '/dashboard/applications', icon: '📋', label: 'Applications' },
     { href: '/dashboard/emails', icon: '📧', label: 'Emails' },
+    { href: '/dashboard/analytics', icon: '📈', label: 'Analytics' },
     { href: '/dashboard/settings', icon: '⚙️', label: 'Settings' },
   ]
 

@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useCachedFetch } from '@/hooks/useCachedFetch'
 
 interface Job {
   id: string
@@ -17,31 +18,29 @@ interface Job {
 }
 
 export default function JobsPage() {
-  const [jobs, setJobs] = useState<Job[]>([])
-  const [loading, setLoading] = useState(true)
+  const jobsQuery = useCachedFetch<{ jobs: Job[] }>('/api/jobs')
+  const profileQuery = useCachedFetch<{ jobKeywords?: string[]; jobLocations?: string[] }>('/api/user/profile')
+  const jobs = jobsQuery.data?.jobs || []
+  const loading = jobsQuery.loading
+  const loadError = jobsQuery.error
+  const load = jobsQuery.reload
+  const setJobs = (update: Job[] | ((prev: Job[]) => Job[])) =>
+    jobsQuery.mutate((cur) => ({ jobs: typeof update === 'function' ? update(cur?.jobs || []) : update }))
   const [searching, setSearching] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [keywords, setKeywords] = useState('')
   const [location, setLocation] = useState('')
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
 
-  async function load() {
-    try {
-      const [jobsRes, profileRes] = await Promise.all([fetch('/api/jobs'), fetch('/api/user/profile')])
-      if (jobsRes.ok) setJobs((await jobsRes.json()).jobs || [])
-      if (profileRes.ok) {
-        const profile = await profileRes.json()
-        setKeywords((profile.jobKeywords || []).join(', '))
-        setLocation((profile.jobLocations || [])[0] || '')
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-
+  // Prefill the search box from saved preferences once, without overwriting typing.
+  const prefilled = useRef(false)
   useEffect(() => {
-    load()
-  }, [])
+    const profile = profileQuery.data
+    if (!profile || prefilled.current) return
+    prefilled.current = true
+    setKeywords((profile.jobKeywords || []).join(', '))
+    setLocation((profile.jobLocations || [])[0] || '')
+  }, [profileQuery.data])
 
   async function handleSearch() {
     setSearching(true)
@@ -134,7 +133,12 @@ export default function JobsPage() {
       </div>
 
       {loading ? (
-        <p className="text-gray-600">Loading…</p>
+        <div className="space-y-4">{[0, 1, 2].map((i) => <div key={i} className="h-28 rounded-lg bg-gray-100 animate-pulse" />)}</div>
+      ) : loadError ? (
+        <div className="bg-red-50 border border-red-200 p-4 rounded-lg text-red-800">
+          {loadError}{' '}
+          <button onClick={load} className="underline">Try again</button>
+        </div>
       ) : visible.length === 0 ? (
         <p className="text-gray-600">No tracked jobs yet. Confirm your profile keywords, then search.</p>
       ) : (

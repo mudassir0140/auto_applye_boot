@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useSession } from 'next-auth/react'
 import Link from 'next/link'
+import { useCachedFetch } from '@/hooks/useCachedFetch'
 
 interface Application {
   id: string
@@ -25,34 +26,15 @@ const STATUS_COLORS = {
 
 export default function ApplicationsPage() {
   const { data: session } = useSession()
-  const [applications, setApplications] = useState<Application[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  // Key effects on this boolean, not the session object: NextAuth hands back a new
+  // object on every refetch (tab focus), which used to re-run every page fetch.
+  const authenticated = !!session
+  const { data, error: loadError, loading } = useCachedFetch<{ applications: Application[] }>('/api/applications', authenticated)
+  const applications = data?.applications || []
   const [filter, setFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
-
-  useEffect(() => {
-    async function fetchApplications() {
-      try {
-        const response = await fetch('/api/dashboard/stats')
-        const data = await response.json().catch(() => ({}))
-        if (!response.ok) throw new Error(data.message || data.error || 'Failed to fetch applications')
-        setLoadError(null)
-        setApplications(data.recentApplications || [])
-      } catch (error) {
-        console.error('Fetch error:', error)
-        setLoadError(error instanceof Error ? error.message : 'Failed to fetch applications')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    if (session) {
-      fetchApplications()
-    }
-  }, [session])
 
   const filteredApplications = applications
     .filter(app => filter === 'all' || app.status === filter)

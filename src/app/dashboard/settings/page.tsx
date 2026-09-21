@@ -2,51 +2,38 @@
 
 import { useEffect, useState } from 'react'
 import { useSession, signIn, signOut } from 'next-auth/react'
+import Link from 'next/link'
 import { useGmailConnection } from '@/hooks/useGmailConnection'
+import { useCachedFetch } from '@/hooks/useCachedFetch'
 
 interface UserSettings {
   email: string
-  name?: string
-  cvUrl?: string
-  portfolioUrl?: string
+  name?: string | null
+  cvUrl?: string | null
+  portfolioUrl?: string | null
   gmailConnected: boolean
 }
 
 export default function SettingsPage() {
-  const { data: session, update: updateSession } = useSession()
+  const { data: session } = useSession()
   const gmail = useGmailConnection()
+  const { data: profile, error: loadError } = useCachedFetch<UserSettings>('/api/user/profile', !!session)
+  // Editable copy of the profile, filled once when it first arrives.
   const [settings, setSettings] = useState<UserSettings | null>(null)
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [gmailConnecting, setGmailConnecting] = useState(false)
 
   useEffect(() => {
-    async function fetchSettings() {
-      try {
-        // Pick up any changes from a just-completed OAuth redirect
-        await updateSession()
-
-        const response = await fetch('/api/dashboard/stats')
-        if (!response.ok) throw new Error('Failed to fetch settings')
-        const data = await response.json()
-        setSettings({
-          email: data.user.email,
-          name: data.user.name,
-          cvUrl: data.user.cvUrl,
-          portfolioUrl: data.user.portfolioUrl,
-          gmailConnected: data.stats.gmailConnected,
-        })
-      } catch (error) {
-        console.error('Failed to load settings:', error)
-      } finally {
-        setLoading(false)
-      }
+    if (profile) {
+      setSettings((current) => current ?? {
+        email: profile.email,
+        name: profile.name,
+        cvUrl: profile.cvUrl,
+        portfolioUrl: profile.portfolioUrl,
+        gmailConnected: profile.gmailConnected,
+      })
     }
-
-    if (session) {
-      fetchSettings()
-    }
-  }, [session, updateSession])
+  }, [profile])
 
   async function handleSave() {
     if (!settings) return
@@ -83,12 +70,15 @@ export default function SettingsPage() {
     }
   }
 
-  if (loading) {
-    return <div className="p-8">Loading settings...</div>
-  }
-
   if (!settings) {
-    return <div className="p-8">Failed to load settings</div>
+    return loadError ? (
+      <div className="p-8 text-red-700">{loadError}</div>
+    ) : (
+      <div className="p-8 max-w-4xl">
+        <h1 className="text-3xl font-bold text-gray-900 mb-8">Settings</h1>
+        <div className="h-64 rounded-lg bg-gray-100 animate-pulse" />
+      </div>
+    )
   }
 
   return (
@@ -228,7 +218,7 @@ export default function SettingsPage() {
         <h2 className="text-xl font-semibold text-gray-900 mb-2">Job Search Preferences</h2>
         <p className="text-gray-600 text-sm">
           Skills, keywords, locations and automatic-apply options are managed on the{' '}
-          <a href="/dashboard/profile" className="text-blue-600 underline">Profile</a> page.
+          <Link href="/dashboard/preferences" className="text-blue-600 underline">Job Preferences</Link> page.
         </p>
       </div>
     </div>

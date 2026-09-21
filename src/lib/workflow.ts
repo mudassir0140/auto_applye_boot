@@ -13,33 +13,47 @@ export async function discoverJobsForUser(user: CurrentUser, overrides?: { keywo
   if (keywords.length === 0) return { found: 0, added: 0 }
 
   const found = await searchJobs(keywords, overrides?.location ?? locations[0])
+  const relevantJobs = found.filter((job) => isRelevantJob(job, skills, keywords))
+  const relevant = relevantJobs.length
+
+  // One lookup + one bulk insert instead of an insert (= Atlas round trip) per posting.
+  const known = await prisma.job.findMany({
+    where: { userId: user.id, url: { in: relevantJobs.map((j) => j.url) } },
+    select: { url: true },
+  })
+  const knownUrls = new Set(known.map((k) => k.url))
+  const rows = relevantJobs
+    .filter((job) => !knownUrls.has(job.url))
+    .map((job) => ({
+      userId: user.id,
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      description: job.description,
+      url: job.url,
+      applyEmail: job.applyEmail,
+      source: job.source,
+      salary: job.salary,
+      jobType: job.jobType,
+      skills: JSON.stringify(job.tags || []),
+      matchScore: calculateJobMatchScore(job, skills, keywords),
+    }))
+
   let added = 0
-  let relevant = 0
-  for (const job of found) {
-    if (!isRelevantJob(job, skills, keywords)) continue
-    relevant++
-    const matchScore = calculateJobMatchScore(job, skills, keywords)
+  if (rows.length > 0) {
     try {
-      await prisma.job.create({
-        data: {
-          userId: user.id,
-          title: job.title,
-          company: job.company,
-          location: job.location,
-          description: job.description,
-          url: job.url,
-          applyEmail: job.applyEmail,
-          source: job.source,
-          salary: job.salary,
-          jobType: job.jobType,
-          skills: JSON.stringify(job.tags || []),
-          matchScore,
-        },
-      })
-      added++
+      added = (await prisma.job.createMany({ data: rows })).count
     } catch (error: any) {
-      // P2002 = already tracked for this user
-      if (error?.code !== 'P2002') console.error('[workflow] failed to save job:', error)
+      // A concurrent run (cron + manual search) saved some of them first: fall back to one by one.
+      if (error?.code !== 'P2002') console.error('[workflow] bulk save failed, retrying individually:', error)
+      for (const row of rows) {
+        try {
+          await prisma.job.create({ data: row })
+          added++
+        } catch (e: any) {
+          if (e?.code !== 'P2002') console.error('[workflow] failed to save job:', e)
+        }
+      }
     }
   }
   await prisma.user.update({ where: { id: user.id }, data: { lastJobSearchAt: new Date() } })
@@ -67,16 +81,15 @@ const companyToken = (company: string) => company.toLowerCase().replace(/\b(inc|
  * Then classify (interview / assessment / rejection / offer) and update the status.
  */
 export async function syncGmailForUser(user: CurrentUser) {
-  const emails = await fetchJobRelatedEmails(user.id)
+  const known = await prisma.jobEmail.findMany({ where: { userId: user.id }, select: { gmailMessageId: true } })
+  const knownIds = new Set(known.map((k) => k.gmailMessageId))
+  const emails = await fetchJobRelatedEmails(user.id, 30, knownIds)
   const applications = await prisma.jobApplication.findMany({ where: { userId: user.id }, include: { job: true } })
   const sent = await prisma.sentEmail.findMany({ where: { userId: user.id }, select: { gmailThreadId: true, applicationId: true } })
   const threadToApp = new Map(sent.filter((s) => s.gmailThreadId && s.applicationId).map((s) => [s.gmailThreadId!, s.applicationId!]))
 
   let saved = 0
   for (const email of emails) {
-    const exists = await prisma.jobEmail.findUnique({ where: { userId_gmailMessageId: { userId: user.id, gmailMessageId: email.gmailMessageId } } })
-    if (exists) continue
-
     let application = email.gmailThreadId && threadToApp.has(email.gmailThreadId)
       ? applications.find((a) => a.id === threadToApp.get(email.gmailThreadId!))
       : undefined

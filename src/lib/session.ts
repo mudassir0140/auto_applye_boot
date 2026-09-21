@@ -46,3 +46,23 @@ export function parseJsonList(value: string | null | undefined): string[] {
     return []
   }
 }
+
+/**
+ * Same as getCurrentUser(), but loads the user's Google account in the SAME round
+ * trip (both queries run in parallel from the session id) instead of one after the
+ * other. Falls back to the email lookup for sessions that predate the DB row.
+ */
+export async function getCurrentUserWithGoogle() {
+  const session = await getServerSession(authOptions)
+  const id = (session?.user as { id?: string } | undefined)?.id
+  if (isObjectId(id)) {
+    const [user, googleAccount] = await Promise.all([
+      prisma.user.findUnique({ where: { id } }),
+      prisma.account.findFirst({ where: { userId: id, provider: 'google' } }),
+    ])
+    if (user) return { user, googleAccount }
+  }
+  const user = await getCurrentUser()
+  if (!user) return null
+  return { user, googleAccount: await prisma.account.findFirst({ where: { userId: user.id, provider: 'google' } }) }
+}

@@ -95,7 +95,12 @@ export interface FetchedEmail {
 }
 
 /** Recent inbox messages (not sent by the user) that look job-related. */
-export async function fetchJobRelatedEmails(userId: string, days = 30): Promise<FetchedEmail[]> {
+/**
+ * `skipIds` = Gmail message ids already saved for this user: they are not downloaded
+ * again. New messages are fetched 8 at a time instead of one after another
+ * (50 sequential Gmail calls took ~15 s and could time out the sync request).
+ */
+export async function fetchJobRelatedEmails(userId: string, days = 30, skipIds: Set<string> = new Set()): Promise<FetchedEmail[]> {
   const { gmail } = await getGmailClient(userId)
   try {
     const list = await gmail.users.messages.list({
@@ -104,10 +109,10 @@ export async function fetchJobRelatedEmails(userId: string, days = 30): Promise<
       maxResults: 50,
     })
 
-    const emails: FetchedEmail[] = []
-    for (const message of list.data.messages || []) {
-      if (!message.id) continue
-      const msg = await gmail.users.messages.get({ userId: 'me', id: message.id, format: 'full' })
+    const ids = (list.data.messages || []).map((m) => m.id).filter((id): id is string => !!id && !skipIds.has(id))
+
+    const fetchOne = async (id: string): Promise<FetchedEmail> => {
+      const msg = await gmail.users.messages.get({ userId: 'me', id, format: 'full' })
       const headers = msg.data.payload?.headers || []
       const header = (name: string) => headers.find((h) => h.name?.toLowerCase() === name)?.value || ''
       const dateHeader = header('date')
@@ -116,14 +121,19 @@ export async function fetchJobRelatedEmails(userId: string, days = 30): Promise<
         : dateHeader
           ? new Date(dateHeader)
           : new Date()
-      emails.push({
-        gmailMessageId: message.id,
+      return {
+        gmailMessageId: id,
         gmailThreadId: msg.data.threadId || null,
         from: header('from'),
         subject: header('subject'),
         body: extractEmailBody(msg.data.payload).slice(0, 20000),
         receivedAt: isNaN(received.getTime()) ? new Date() : received,
-      })
+      }
+    }
+
+    const emails: FetchedEmail[] = []
+    for (let i = 0; i < ids.length; i += 8) {
+      emails.push(...(await Promise.all(ids.slice(i, i + 8).map(fetchOne))))
     }
     return emails
   } catch (error) {

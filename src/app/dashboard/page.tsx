@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { useSession, signIn, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { useGmailConnection } from '@/hooks/useGmailConnection'
+import { useCachedFetch } from '@/hooks/useCachedFetch'
 
 interface DashboardStats {
   totalJobs: number
@@ -56,6 +56,13 @@ interface UserProfile {
   preferredRoles: string[]
 }
 
+interface DashboardResponse {
+  stats: DashboardStats
+  recentApplications: RecentApplication[]
+  recentEmails: RecentEmail[]
+  user: UserProfile
+}
+
 interface ApplicationHistory {
   id: string
   company: string
@@ -67,68 +74,36 @@ interface ApplicationHistory {
 
 export default function Dashboard() {
   const { data: session } = useSession()
+  // Key effects on this boolean, not the session object: NextAuth hands back a new
+  // object on every refetch (tab focus), which used to re-run every page fetch.
+  const authenticated = !!session
   const gmailStatus = useGmailConnection()
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [recentApplications, setRecentApplications] = useState<RecentApplication[]>([])
-  const [recentEmails, setRecentEmails] = useState<RecentEmail[]>([])
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
-  const [applicationHistory, setApplicationHistory] = useState<ApplicationHistory[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const [reloadKey, setReloadKey] = useState(0)
-
-  useEffect(() => {
-    async function fetchDashboardData() {
-      setLoading(true)
-      setError(null)
-      try {
-        const response = await fetch('/api/dashboard/stats', { cache: 'no-store' })
-        const data = await response.json().catch(() => ({}))
-        if (!response.ok) {
-          throw new Error(data.message || data.error || `Dashboard request failed (${response.status})`)
-        }
-
-        setStats(data.stats)
-        setRecentApplications(data.recentApplications || [])
-        setRecentEmails(data.recentEmails || [])
-        setUserProfile(data.user)
-        setApplicationHistory(data.applicationHistory || [])
-      } catch (err) {
-        // No default/demo numbers: show the real error instead.
-        setStats(null)
-        setError(err instanceof Error ? err.message : 'Unknown error')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    if (session) {
-      fetchDashboardData()
-    }
-  }, [session, reloadKey])
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading your dashboard...</p>
-        </div>
-      </div>
-    )
-  }
+  const { data, error, loading, reload } = useCachedFetch<DashboardResponse>('/api/dashboard/stats', authenticated)
+  const stats = data?.stats
+  const recentApplications = data?.recentApplications || []
+  const recentEmails = data?.recentEmails || []
+  const userProfile = data?.user || null
 
   if (!stats) {
+    if (loading) {
+      // Nothing cached yet: show the page skeleton, not a full-screen spinner.
+      return (
+        <div className="p-8">
+          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-24 rounded-lg bg-gray-100 animate-pulse" />
+            ))}
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="p-8 max-w-2xl">
         <div className="bg-red-50 border border-red-200 p-6 rounded-lg">
           <h2 className="text-lg font-semibold text-red-900 mb-2">Could not load your dashboard</h2>
           <p className="text-red-800 mb-4">{error || 'No data was returned.'}</p>
-          <button
-            onClick={() => setReloadKey((k) => k + 1)}
-            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-          >
+          <button onClick={reload} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
             Try again
           </button>
         </div>
