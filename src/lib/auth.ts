@@ -7,7 +7,9 @@ const clientId = process.env.GOOGLE_CLIENT_ID
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET
 const secret = process.env.NEXTAUTH_SECRET
 
-if (!secret) {
+// Not enforced while `next build` collects page data (the root layout imports this module);
+// the check still runs whenever the server actually starts.
+if (!secret && process.env.NEXT_PHASE !== 'phase-production-build') {
   const instructions = process.env.NODE_ENV === 'production'
     ? 'Set NEXTAUTH_SECRET in your Vercel project environment variables'
     : 'Set NEXTAUTH_SECRET in .env.local'
