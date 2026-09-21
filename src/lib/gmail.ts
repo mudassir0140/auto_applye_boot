@@ -301,6 +301,45 @@ export async function fetchJobRelatedEmails(userId: string, days = 30, skipIds: 
   })
 }
 
+/**
+ * Replies to emails Boot sent: reads each sent thread directly from Gmail and returns every
+ * message in it that the user did NOT send (SENT label absent). Independent of keywords, so a
+ * one-line "thanks, call me" reply is never missed. Unreadable threads (deleted) are skipped.
+ */
+export async function fetchThreadReplies(userId: string, threadIds: string[], skipIds: Set<string> = new Set()): Promise<FetchedEmail[]> {
+  return withGmail(userId, async (gmail) => {
+    const replies: FetchedEmail[] = []
+    const fetchThread = async (threadId: string) => {
+      let thread
+      try {
+        thread = await gmail.users.threads.get({ userId: 'me', id: threadId, format: 'full' })
+      } catch (error) {
+        const status = Number((error as { code?: number; response?: { status?: number } })?.response?.status ?? (error as { code?: number })?.code)
+        if (status === 404) return
+        throw error
+      }
+      for (const msg of thread.data.messages || []) {
+        if (!msg.id || skipIds.has(msg.id) || msg.labelIds?.includes('SENT') || msg.labelIds?.includes('DRAFT')) continue
+        const headers = msg.payload?.headers || []
+        const header = (name: string) => headers.find((h) => h.name?.toLowerCase() === name)?.value || ''
+        const received = msg.internalDate ? new Date(Number(msg.internalDate)) : new Date(header('date') || Date.now())
+        replies.push({
+          gmailMessageId: msg.id,
+          gmailThreadId: msg.threadId || threadId,
+          from: header('from'),
+          subject: header('subject'),
+          body: extractEmailBody(msg.payload).slice(0, 20000),
+          receivedAt: isNaN(received.getTime()) ? new Date() : received,
+        })
+      }
+    }
+    for (let i = 0; i < threadIds.length; i += 8) {
+      await Promise.all(threadIds.slice(i, i + 8).map(fetchThread))
+    }
+    return replies
+  })
+}
+
 function decode(data: string) {
   return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8')
 }

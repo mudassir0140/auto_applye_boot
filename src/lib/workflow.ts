@@ -3,7 +3,7 @@ import { parseJsonList } from './session'
 import type { CurrentUser } from './session'
 import { searchJobs, calculateJobMatchScore, isRelevantJob, detectApplyFlow } from './jobs'
 import { classifyJob } from './job-classifier'
-import { fetchJobRelatedEmails, classifyJobEmail, getGoogleAccount, isGmailConnected, gmailIssueFrom, checkGmailHealth } from './gmail'
+import { fetchJobRelatedEmails, fetchThreadReplies, classifyJobEmail, getGoogleAccount, isGmailConnected, gmailIssueFrom, checkGmailHealth } from './gmail'
 import { applyToJob, BLOCKING_APPLY_FAILURES } from './apply'
 
 /**
@@ -118,9 +118,16 @@ const companyToken = (company: string) => company.toLowerCase().replace(/\b(inc|
 export async function syncGmailForUser(user: CurrentUser) {
   const known = await prisma.jobEmail.findMany({ where: { userId: user.id }, select: { gmailMessageId: true } })
   const knownIds = new Set(known.map((k) => k.gmailMessageId))
-  const emails = await fetchJobRelatedEmails(user.id, 30, knownIds)
   const applications = await prisma.jobApplication.findMany({ where: { userId: user.id }, include: { job: true } })
-  const sent = await prisma.sentEmail.findMany({ where: { userId: user.id }, select: { gmailThreadId: true, applicationId: true } })
+  const sent = await prisma.sentEmail.findMany({ where: { userId: user.id }, select: { id: true, gmailThreadId: true, applicationId: true, status: true } })
+  const sentThreadIds = Array.from(new Set(sent.map((s) => s.gmailThreadId).filter((t): t is string => !!t)))
+  const searched = await fetchJobRelatedEmails(user.id, 30, knownIds)
+  const threadReplies = await fetchThreadReplies(user.id, sentThreadIds, knownIds)
+  const seen = new Set<string>()
+  const emails = [...threadReplies, ...searched]
+    .filter((e) => !seen.has(e.gmailMessageId) && !!seen.add(e.gmailMessageId))
+    .sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime()) // oldest first: the latest message decides the status
+  const sentByThread = new Map(sent.filter((s) => s.gmailThreadId).map((s) => [s.gmailThreadId!, s]))
   const threadToApp = new Map(sent.filter((s) => s.gmailThreadId && s.applicationId).map((s) => [s.gmailThreadId!, s.applicationId!]))
 
   let saved = 0
@@ -166,6 +173,23 @@ export async function syncGmailForUser(user: CurrentUser) {
     }
     saved++
 
+    // Keep the sent-email record in step with what Gmail shows: reply count, last reply and status.
+    const sentRow = email.gmailThreadId ? sentByThread.get(email.gmailThreadId) : undefined
+    if (sentRow) {
+      const trackedStatus = emailType === 'bounce' ? 'bounced' : STATUS_BY_TYPE[emailType] || (!sentRow.status || sentRow.status === 'sent' ? 'replied' : sentRow.status)
+      sentRow.status = trackedStatus
+      await prisma.sentEmail.update({
+        where: { id: sentRow.id },
+        data: {
+          status: trackedStatus,
+          replyCount: { increment: 1 },
+          lastReplyAt: email.receivedAt,
+          lastReplyFrom: email.from,
+          lastReplySubject: email.subject,
+        },
+      })
+    }
+
     const nextStatus = STATUS_BY_TYPE[emailType]
     if (!nextStatus) continue
     await prisma.jobApplication.update({ where: { id: application.id }, data: { status: nextStatus } })
@@ -200,6 +224,7 @@ export async function syncGmailForUser(user: CurrentUser) {
       },
     })
   }
+  if (sent.length) await prisma.sentEmail.updateMany({ where: { userId: user.id }, data: { lastCheckedAt: new Date() } })
   await prisma.user.update({ where: { id: user.id }, data: { lastGmailSyncAt: new Date() } })
   return { scanned: emails.length, saved, bounced }
 }

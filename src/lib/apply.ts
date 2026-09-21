@@ -143,6 +143,13 @@ export async function applyToJob(
             to: recipient,
             subject: content.subject,
             body: content.bodyPlain,
+            company: job.company,
+            jobTitle: job.title,
+            fromEmail: sent.from,
+            cvFileName: cv?.fileName ?? null,
+            cvUrl: user.cvUrl,
+            portfolioUrl: user.portfolioUrl,
+            status: 'sent',
           },
         })
         .catch((err) => console.error('[apply] email was sent but saving SentEmail failed:', err))

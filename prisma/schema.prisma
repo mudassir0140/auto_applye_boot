@@ -207,8 +207,25 @@ model SentEmail {
   body           String
   sentAt         DateTime @default(now())
 
+  // Full record of the application (all optional so older rows stay valid).
+  company        String?
+  jobTitle       String?
+  fromEmail      String?
+  cvFileName     String?  // CV attached to the email, if a file was uploaded
+  cvUrl          String?  // CV link included in the email body
+  portfolioUrl   String?
+  // sent | replied | interview | assessment | rejected | offer | bounced
+  status         String?  @default("sent")
+  replyCount     Int      @default(0)
+  lastReplyAt    DateTime?
+  lastReplyFrom  String?
+  lastReplySubject String?
+  lastCheckedAt  DateTime?
+  updatedAt      DateTime? @updatedAt
+
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, gmailMessageId])
   @@index([userId, sentAt])
   @@index([userId, gmailThreadId])
 }
