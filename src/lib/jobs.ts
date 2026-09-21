@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { classifyJob, userTracks, matchesUserTracks } from './job-classifier'
 
 // Real job sources with free public JSON APIs (no scraping, no API keys).
 export interface FoundJob {
@@ -8,6 +9,8 @@ export interface FoundJob {
   description?: string
   url: string
   applyEmail?: string
+  /** Where a human applies (employer/ATS page) when there is no application email. */
+  applyUrl?: string
   source: string
   salary?: string
   jobType?: string
@@ -35,10 +38,71 @@ export function stripHtml(html: string): string {
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi
 const BAD_EMAIL = /^(no-?reply|donotreply|do-not-reply|privacy|abuse|support-noreply)@|@(example|sentry|domain|email)\./i
 
-/** A real recruiter/apply address from the posting text, or undefined. */
-export function extractApplyEmail(text: string): string | undefined {
-  const matches = text.match(EMAIL_RE) || []
-  return matches.find((m) => !BAD_EMAIL.test(m))?.toLowerCase()
+const RECRUITING_MAILBOX = /^(jobs?|careers?|hr|recruit(ing|ment|er|ers)?|talent|hiring|apply|applications?|cv|resume|people|work|join)$/i
+const APPLY_CONTEXT = /(apply|send|e-?mail|mail|submit|forward|cv|resume|résumé|application)[^\n@]{0,120}?([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi
+
+/**
+ * A recruiter/apply address from the posting, or undefined. Deliberately strict —
+ * a wrong address means Boot emails a stranger — so an address only counts when it is
+ *  1. named in an "apply / send your CV to ..." sentence, or
+ *  2. a recruiting mailbox (jobs@, careers@, hr@, ...), or
+ *  3. on the company's own domain.
+ * Random addresses elsewhere in the text (support@, press@, a founder's email) are ignored.
+ */
+export function extractApplyEmail(text: string, company = ''): string | undefined {
+  const all = Array.from(new Set((text.match(EMAIL_RE) || []).map((m) => m.toLowerCase()))).filter((m) => !BAD_EMAIL.test(m))
+  if (all.length === 0) return undefined
+
+  for (const m of text.matchAll(APPLY_CONTEXT)) {
+    const e = m[2].toLowerCase()
+    if (!BAD_EMAIL.test(e)) return e
+  }
+  const mailbox = all.find((e) => RECRUITING_MAILBOX.test(e.split('@')[0]))
+  if (mailbox) return mailbox
+  const token = company.toLowerCase().replace(/\b(inc|llc|ltd|gmbh|corp|co|limited|the)\b\.?/g, '').replace(/[^a-z0-9]/g, '')
+  if (token.length >= 3) {
+    const own = all.find((e) => e.split('@')[1].replace(/[^a-z0-9]/g, '').includes(token))
+    if (own) return own
+  }
+  return undefined
+}
+
+export type ApplyMethod = 'email' | 'external'
+export interface ApplyFlow {
+  method: ApplyMethod
+  /** email | greenhouse | lever | ashby | workable | ... | the job board name */
+  channel: string
+  applyUrl: string
+}
+
+const ATS_HOSTS: Array<[RegExp, string]> = [
+  [/greenhouse\.io/i, 'greenhouse'],
+  [/lever\.co/i, 'lever'],
+  [/ashbyhq\.com/i, 'ashby'],
+  [/workable\.com/i, 'workable'],
+  [/smartrecruiters\.com/i, 'smartrecruiters'],
+  [/myworkdayjobs\.com|workday\.com/i, 'workday'],
+  [/breezy\.hr/i, 'breezy'],
+  [/recruitee\.com/i, 'recruitee'],
+  [/teamtailor\.com/i, 'teamtailor'],
+  [/bamboohr\.com/i, 'bamboohr'],
+  [/personio\./i, 'personio'],
+  [/linkedin\.com/i, 'linkedin'],
+  [/indeed\.com/i, 'indeed'],
+]
+
+/**
+ * How can this job legitimately be applied to?
+ *  - email: the posting names an application address -> Boot sends it from the user's Gmail.
+ *  - external: an employer/ATS form or a job board. ATS submission APIs need the
+ *    employer's private API key and the forms are captcha-protected, so Boot does NOT
+ *    pretend to submit them: it links the user straight to the form and tracks the result.
+ */
+export function detectApplyFlow(job: Pick<FoundJob, 'url' | 'applyUrl' | 'applyEmail' | 'source'>): ApplyFlow {
+  const applyUrl = job.applyUrl || job.url
+  if (job.applyEmail) return { method: 'email', channel: 'email', applyUrl }
+  const ats = ATS_HOSTS.find(([re]) => re.test(applyUrl))
+  return { method: 'external', channel: ats ? ats[1] : job.source, applyUrl }
 }
 
 // Arbeitnow and RemoteOK return their WHOLE feed regardless of keyword. It used to be
@@ -64,7 +128,7 @@ async function fromRemotive(keyword: string): Promise<FoundJob[]> {
       location: j.candidate_required_location || 'Remote',
       description: description.slice(0, 6000),
       url: j.url,
-      applyEmail: extractApplyEmail(description),
+      applyEmail: extractApplyEmail(description, j.company_name || j.company || ''),
       source: 'remotive',
       salary: j.salary || undefined,
       jobType: j.job_type || undefined,
@@ -86,7 +150,7 @@ async function fromArbeitnow(keyword: string): Promise<FoundJob[]> {
         location: j.remote ? `Remote${j.location ? ` (${j.location})` : ''}` : j.location,
         description: description.slice(0, 6000),
         url: j.url,
-        applyEmail: extractApplyEmail(description),
+        applyEmail: extractApplyEmail(description, j.company_name || j.company || ''),
         source: 'arbeitnow',
         jobType: (j.job_types || []).join(', ') || undefined,
         tags: j.tags || [],
@@ -107,7 +171,8 @@ async function fromRemoteOk(keyword: string): Promise<FoundJob[]> {
         location: j.location || 'Remote',
         description: description.slice(0, 6000),
         url: j.url,
-        applyEmail: extractApplyEmail(description),
+        applyEmail: extractApplyEmail(description, j.company_name || j.company || ''),
+        applyUrl: j.apply_url || undefined,
         source: 'remoteok',
         salary: j.salary_min ? `$${j.salary_min}–$${j.salary_max}` : undefined,
         tags: j.tags || [],
@@ -144,30 +209,51 @@ const termHits = (text: string, term: string) =>
   new RegExp(`(^|[^a-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(text)
 
 /**
- * A posting is only worth tracking (and applying to) when it is about what the
- * user does: its title or tags must name one of the user's skills/keywords
- * (e.g. a Flutter developer never gets React-only roles) and the overall match
- * score must clear a floor. Free-text mentions alone are not enough.
+ * A posting is only worth tracking (and applying to) when its ROLE matches what the
+ * user targets. The posting is classified (React/Next.js/JavaScript, Flutter, React
+ * Native, Node, ...) from its title/tags, and must fall in a track the user's
+ * confirmed keywords / roles / skills point at — a Flutter developer never gets
+ * React-only roles, a React developer never gets Vue, Java or Flutter ones.
+ * Keywords that map to no known track (e.g. "data analyst") fall back to plain
+ * title/tag term matching. The match score must also clear a floor.
  */
-export function isRelevantJob(job: Pick<FoundJob, 'title' | 'description' | 'tags'>, skills: string[], keywords: string[]): boolean {
-  const terms = Array.from(new Set([...skills, ...keywords].map((s) => s.toLowerCase().trim()).filter((s) => s.length > 1)))
+export function isRelevantJob(
+  job: Pick<FoundJob, 'title' | 'description' | 'tags'>,
+  skills: string[],
+  keywords: string[],
+  roles: string[] = []
+): boolean {
+  const user = userTracks(skills, keywords, roles)
+  const cls = classifyJob(job)
+
+  if (user.tracks.size > 0) {
+    if (!matchesUserTracks(cls, user)) return false
+    return calculateJobMatchScore(job, skills, keywords, roles) >= MIN_RELEVANT_SCORE
+  }
+
+  const terms = Array.from(new Set([...skills, ...keywords, ...roles].map((s) => s.toLowerCase().trim()).filter((s) => s.length > 1)))
   if (terms.length === 0) return false
   const headline = `${job.title} ${(job.tags || []).join(' ')}`.toLowerCase()
   if (!terms.some((t) => termHits(headline, t))) return false
-  return calculateJobMatchScore(job, skills, keywords) >= MIN_RELEVANT_SCORE
+  return calculateJobMatchScore(job, skills, keywords, roles) >= MIN_RELEVANT_SCORE
 }
 
-/** 0–100: how many of the user's skills/keywords the posting mentions, plus title hits. */
-export function calculateJobMatchScore(job: Pick<FoundJob, 'title' | 'description' | 'tags'>, skills: string[], keywords: string[]): number {
+/** 0–100: how many of the user's skills/keywords the posting mentions, plus title hits and a role-match bonus. */
+export function calculateJobMatchScore(
+  job: Pick<FoundJob, 'title' | 'description' | 'tags'>,
+  skills: string[],
+  keywords: string[],
+  roles: string[] = []
+): number {
   const haystack = `${job.title} ${(job.tags || []).join(' ')} ${job.description || ''}`.toLowerCase()
   const title = job.title.toLowerCase()
   const terms = Array.from(new Set([...skills, ...keywords].map((s) => s.toLowerCase().trim()).filter(Boolean)))
   if (terms.length === 0) return 0
 
-  const hit = (t: string) => new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(haystack)
-  const matched = terms.filter(hit).length
+  const matched = terms.filter((t) => termHits(haystack, t)).length
   const titleHits = keywords.filter((k) => k && title.includes(k.toLowerCase())).length
+  const roleBonus = matchesUserTracks(classifyJob(job), userTracks(skills, keywords, roles)) ? 15 : 0
 
   const base = (matched / Math.min(terms.length, 8)) * 80
-  return Math.min(100, Math.round(base + Math.min(titleHits, 2) * 10))
+  return Math.min(100, Math.round(base + Math.min(titleHits, 2) * 10 + roleBonus))
 }

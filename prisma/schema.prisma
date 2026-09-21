@@ -87,6 +87,11 @@ model Account {
   // Set when the user disconnects Gmail or Google revokes the grant.
   // The row is kept so signing in again re-links to the same user.
   disconnectedAt     DateTime?
+  // Result of the last real Gmail API call: ok | api_disabled | scope_missing | null (never called).
+  // Lets the UI say *why* Gmail is not working instead of a generic failure.
+  gmailStatus        String?
+  gmailStatusMessage String?
+  gmailCheckedAt     DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -120,6 +125,13 @@ model Job {
   description     String?
   url             String
   applyEmail      String?   // recruiter/apply email found in the posting, if any
+  applyUrl        String?   // where a human applies when there is no application email
+  applyMethod     String?   // email | external  (how Boot can legitimately apply)
+  applyChannel    String?   // email | greenhouse | lever | ashby | workable | linkedin | ...
+  roleCategory    String?   // react_js | flutter_mobile | react_native | node_backend | ...
+  technologies    String?   // JSON array of technologies found in the posting
+  applyError      String?   // why the last automatic application failed (never hidden)
+  applyAttemptedAt DateTime?
   source          String
   salary          String?
   jobType         String?
