@@ -1,4 +1,5 @@
 'use client'
+import '@/lib/normalize-env'
 
 import { useState } from 'react'
 import { signIn } from 'next-auth/react'

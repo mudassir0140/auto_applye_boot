@@ -1,3 +1,4 @@
+import '@/lib/normalize-env'
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { getCurrentUser } from '@/lib/session'

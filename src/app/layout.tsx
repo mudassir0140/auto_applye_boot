@@ -1,3 +1,4 @@
+import '@/lib/normalize-env'
 import type { Metadata } from 'next'
 import './globals.css'
 import { getServerSession } from 'next-auth/next'

@@ -1,4 +1,5 @@
 'use client'
+import '@/lib/normalize-env'
 
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter, usePathname } from 'next/navigation'
