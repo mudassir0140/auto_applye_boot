@@ -22,6 +22,7 @@ const STATUS_COLORS = {
   assessment: 'bg-yellow-100 text-yellow-900',
   rejected: 'bg-red-100 text-red-900',
   offer: 'bg-purple-100 text-purple-900',
+  bounced: 'bg-orange-100 text-orange-900',
 }
 
 export default function ApplicationsPage() {
@@ -49,7 +50,7 @@ export default function ApplicationsPage() {
     currentPage * itemsPerPage
   )
 
-  const statuses = ['all', 'applied', 'interview', 'assessment', 'rejected', 'offer']
+  const statuses = ['all', 'applied', 'interview', 'assessment', 'rejected', 'offer', 'bounced']
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">

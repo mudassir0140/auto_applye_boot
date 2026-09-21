@@ -1,5 +1,9 @@
-import { google } from 'googleapis'
+import { google, gmail_v1 } from 'googleapis'
 import { prisma } from './prisma'
+
+// Scopes the OAuth flow requests (src/lib/auth.ts) and Boot needs at runtime.
+export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send'
+export const GMAIL_READ_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
 
 export class GmailNotConnectedError extends Error {
   constructor(message = 'Gmail is not connected. Sign in with Google again to reconnect.') {
@@ -8,12 +12,107 @@ export class GmailNotConnectedError extends Error {
   }
 }
 
+/** The Google Cloud project has the Gmail API switched off (Google returns 403 accessNotConfigured / SERVICE_DISABLED). */
+export class GmailApiDisabledError extends Error {
+  code = 'api_disabled' as const
+  activationUrl?: string
+  constructor(activationUrl?: string) {
+    super(
+      `The Gmail API is not enabled in your Google Cloud project. Enable it${activationUrl ? ` at ${activationUrl}` : ' (APIs & Services → Library → Gmail API → Enable)'}, wait a minute, then try again.`
+    )
+    this.name = 'GmailApiDisabledError'
+    this.activationUrl = activationUrl
+  }
+}
+
+/** The user did not grant (or Google did not return) the Gmail permissions Boot needs. */
+export class GmailScopeError extends Error {
+  code = 'scope_missing' as const
+  constructor(missing: string[] = []) {
+    super(
+      `Boot does not have permission to ${missing.includes(GMAIL_SEND_SCOPE) ? 'send' : 'read'} Gmail. Sign in with Google again and tick every Gmail permission on the consent screen.`
+    )
+    this.name = 'GmailScopeError'
+  }
+}
+
+export class GmailTransientError extends Error {
+  code = 'transient' as const
+  constructor(message: string) {
+    super(message)
+    this.name = 'GmailTransientError'
+  }
+}
+
+export type GmailIssueCode = 'api_disabled' | 'scope_missing'
+
 export async function getGoogleAccount(userId: string) {
   return prisma.account.findFirst({ where: { userId, provider: 'google' } })
 }
 
 export function isGmailConnected(account: { access_token: string | null; refresh_token: string | null; disconnectedAt: Date | null } | null | undefined) {
   return !!account && !account.disconnectedAt && !!(account.access_token || account.refresh_token)
+}
+
+/** Scopes Google actually granted (stored at sign-in) that are missing. Empty scope = unknown, so not flagged. */
+export function missingGmailScopes(scope: string | null | undefined): string[] {
+  if (!scope) return []
+  const granted = scope.split(/\s+/)
+  return [GMAIL_READ_SCOPE, GMAIL_SEND_SCOPE].filter((s) => !granted.includes(s))
+}
+
+/** The stored reason Gmail is not working, for the UI. null = fine or never used. */
+export function gmailIssueFrom(
+  account: { gmailStatus: string | null; gmailStatusMessage: string | null; scope: string | null } | null | undefined
+): { code: GmailIssueCode; message: string } | null {
+  if (!account) return null
+  const missing = missingGmailScopes(account.scope)
+  if (missing.length) return { code: 'scope_missing', message: new GmailScopeError(missing).message }
+  if (account.gmailStatus === 'api_disabled' || account.gmailStatus === 'scope_missing') {
+    return { code: account.gmailStatus, message: account.gmailStatusMessage || 'Gmail is not working.' }
+  }
+  return null
+}
+
+/** Turn a googleapis failure into a typed error. Returns the input unchanged when it is something else. */
+export function classifyGoogleError(error: unknown): unknown {
+  const e = error as {
+    code?: number | string
+    status?: number
+    message?: string
+    errors?: Array<{ reason?: string; message?: string }>
+    response?: { status?: number; data?: { error?: { status?: string; message?: string; details?: Array<{ reason?: string; metadata?: Record<string, string> }>; errors?: Array<{ reason?: string }> } } }
+  }
+  const status = Number(e?.response?.status ?? e?.status ?? e?.code)
+  const gerr = e?.response?.data?.error
+  const reasons = [
+    ...(e?.errors || []).map((x) => x.reason),
+    ...(gerr?.errors || []).map((x) => x.reason),
+    ...(gerr?.details || []).map((x) => x.reason),
+  ].filter(Boolean) as string[]
+  const message = `${e?.message ?? ''} ${gerr?.message ?? ''}`
+
+  if (reasons.some((r) => /accessNotConfigured|SERVICE_DISABLED/i.test(r)) || /has not been used in project|API has not been enabled|is disabled\. Enable it/i.test(message)) {
+    const meta = (gerr?.details || []).find((d) => d.metadata?.activationUrl)?.metadata?.activationUrl
+    const fromText = message.match(/https:\/\/console\.(?:developers|cloud)\.google\.com\/[^\s"')]+/)?.[0]
+    return new GmailApiDisabledError(meta || fromText)
+  }
+  if (
+    reasons.some((r) => /insufficientPermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(r)) ||
+    /insufficient (authentication scopes|permission)/i.test(message)
+  ) {
+    return new GmailScopeError()
+  }
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || /rateLimitExceeded|userRateLimitExceeded|backendError/i.test(reasons.join(' '))) {
+    return new GmailTransientError(`Gmail is temporarily unavailable (${status || 'rate limit'}). Try again shortly.`)
+  }
+  return error
+}
+
+async function recordGmailStatus(accountId: string, status: 'ok' | GmailIssueCode, message: string | null) {
+  await prisma.account
+    .update({ where: { id: accountId }, data: { gmailStatus: status, gmailStatusMessage: message, gmailCheckedAt: new Date() } })
+    .catch((err) => console.error('[gmail] failed to save Gmail status:', err))
 }
 
 /**
@@ -24,6 +123,14 @@ export function isGmailConnected(account: { access_token: string | null; refresh
 export async function getGmailClient(userId: string) {
   const account = await getGoogleAccount(userId)
   if (!account || !isGmailConnected(account)) throw new GmailNotConnectedError()
+
+  // Fail before calling Google if the consent screen was completed without the Gmail permissions.
+  const missing = missingGmailScopes(account.scope)
+  if (missing.length) {
+    const err = new GmailScopeError(missing)
+    if (account.gmailStatus !== 'scope_missing') await recordGmailStatus(account.id, 'scope_missing', err.message)
+    throw err
+  }
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -50,6 +157,59 @@ export async function getGmailClient(userId: string) {
   })
 
   return { gmail: google.gmail({ version: 'v1', auth: oauth2Client }), oauth2Client, account }
+}
+
+/**
+ * Run Gmail API calls for a user with uniform error handling:
+ *  - "Gmail API disabled" / "missing scope" become typed errors with an actionable
+ *    message, and are remembered on the account so the dashboard can explain them;
+ *  - a dead/revoked grant marks the account disconnected;
+ *  - a rate-limit / 5xx is retried once, then reported honestly;
+ *  - the first success after an issue clears the stored issue.
+ */
+export async function withGmail<T>(userId: string, fn: (gmail: gmail_v1.Gmail) => Promise<T>): Promise<T> {
+  const { gmail, account } = await getGmailClient(userId)
+  const attempt = async () => {
+    try {
+      return await fn(gmail)
+    } catch (error) {
+      throw classifyGoogleError(error)
+    }
+  }
+  try {
+    let result: T
+    try {
+      result = await attempt()
+    } catch (error) {
+      if (!(error instanceof GmailTransientError)) throw error
+      await new Promise((r) => setTimeout(r, 1500))
+      result = await attempt()
+    }
+    if (account.gmailStatus !== 'ok') await recordGmailStatus(account.id, 'ok', null)
+    return result
+  } catch (error) {
+    if (error instanceof GmailApiDisabledError) {
+      await recordGmailStatus(account.id, 'api_disabled', error.message)
+    } else if (error instanceof GmailScopeError) {
+      await recordGmailStatus(account.id, 'scope_missing', error.message)
+    } else {
+      await handleGoogleAuthFailure(userId, error)
+    }
+    throw error
+  }
+}
+
+/** Live check used by the dashboard/settings: does a real Gmail API call work right now? */
+export async function checkGmailHealth(userId: string): Promise<{ ok: true; email: string } | { ok: false; code: string; message: string }> {
+  try {
+    const email = await withGmail(userId, async (gmail) => (await gmail.users.getProfile({ userId: 'me' })).data.emailAddress || '')
+    return { ok: true, email }
+  } catch (error) {
+    if (error instanceof GmailApiDisabledError || error instanceof GmailScopeError) return { ok: false, code: error.code, message: error.message }
+    if (error instanceof GmailNotConnectedError) return { ok: false, code: 'not_connected', message: error.message }
+    if (error instanceof GmailTransientError) return { ok: false, code: 'transient', message: error.message }
+    return { ok: false, code: 'error', message: error instanceof Error ? error.message : 'Gmail check failed' }
+  }
 }
 
 /** Force a token refresh now if the access token is expired/expiring. */
@@ -94,21 +254,23 @@ export interface FetchedEmail {
   receivedAt: Date
 }
 
-/** Recent inbox messages (not sent by the user) that look job-related. */
+// Job-related keywords plus delivery-failure notices (a bounced application must be noticed).
+const JOB_MAIL_QUERY =
+  'in:inbox -from:me newer_than:{days}d (interview OR assessment OR application OR applying OR applied OR candidate OR position OR role OR offer OR unfortunately OR "your application" OR recruiter OR hiring OR from:mailer-daemon OR from:postmaster OR subject:"delivery status notification")'
+
 /**
+ * Recent inbox messages (not sent by the user) that look job-related.
  * `skipIds` = Gmail message ids already saved for this user: they are not downloaded
  * again. New messages are fetched 8 at a time instead of one after another
  * (50 sequential Gmail calls took ~15 s and could time out the sync request).
  */
 export async function fetchJobRelatedEmails(userId: string, days = 30, skipIds: Set<string> = new Set()): Promise<FetchedEmail[]> {
-  const { gmail } = await getGmailClient(userId)
-  try {
+  return withGmail(userId, async (gmail) => {
     const list = await gmail.users.messages.list({
       userId: 'me',
-      q: `in:inbox -from:me newer_than:${days}d (interview OR assessment OR application OR applied OR candidate OR position OR role OR offer OR unfortunately OR "your application" OR recruiter OR hiring)`,
+      q: JOB_MAIL_QUERY.replace('{days}', String(days)),
       maxResults: 50,
     })
-
     const ids = (list.data.messages || []).map((m) => m.id).filter((id): id is string => !!id && !skipIds.has(id))
 
     const fetchOne = async (id: string): Promise<FetchedEmail> => {
@@ -136,10 +298,7 @@ export async function fetchJobRelatedEmails(userId: string, days = 30, skipIds: 
       emails.push(...(await Promise.all(ids.slice(i, i + 8).map(fetchOne))))
     }
     return emails
-  } catch (error) {
-    await handleGoogleAuthFailure(userId, error)
-    throw error
-  }
+  })
 }
 
 function decode(data: string) {
@@ -160,7 +319,16 @@ function extractEmailBody(payload: any): string {
   return ''
 }
 
-export function classifyJobEmail(subject: string, body: string): string {
+/** True for automatic "your message could not be delivered" notices. */
+export function isBounceNotice(from: string, subject: string): boolean {
+  return (
+    /(mailer-daemon|postmaster)@/i.test(from) ||
+    /delivery status notification|undeliverable|mail delivery (subsystem|failed)|delivery (has )?failed|returned mail|address not found/i.test(subject)
+  )
+}
+
+export function classifyJobEmail(subject: string, body: string, from = ''): string {
+  if (isBounceNotice(from, subject)) return 'bounce'
   const content = `${subject} ${body}`.toLowerCase()
   const has = (re: RegExp) => re.test(content)
 
@@ -222,14 +390,17 @@ function buildMime(from: string, email: EmailContent): string {
   )
 }
 
-/** Sends through the user's own Gmail; the message appears in their Sent folder. */
+/**
+ * Sends through the user's own Gmail; the message appears in their Sent folder.
+ * Only reports success when Gmail returns a message id (and, if it reports labels,
+ * the SENT label) — an application is never recorded as sent on a guess.
+ */
 export async function sendApplicationEmail(
   userId: string,
   email: EmailContent,
   fromName?: string | null
 ): Promise<{ messageId: string; threadId: string | null; from: string }> {
-  const { gmail } = await getGmailClient(userId)
-  try {
+  return withGmail(userId, async (gmail) => {
     const profile = await gmail.users.getProfile({ userId: 'me' })
     const address = profile.data.emailAddress || ''
     const from = fromName ? `${encodeHeader(fromName)} <${address}>` : address
@@ -240,11 +411,12 @@ export async function sendApplicationEmail(
       .replace(/=+$/, '')
 
     const response = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } })
-    return { messageId: response.data.id || '', threadId: response.data.threadId || null, from: address }
-  } catch (error) {
-    await handleGoogleAuthFailure(userId, error)
-    throw new Error(`Failed to send email: ${error instanceof Error ? error.message : 'Unknown error'}`)
-  }
+    const labels = response.data.labelIds
+    if (!response.data.id || (labels && !labels.includes('SENT'))) {
+      throw new Error('Gmail did not confirm that the message was sent.')
+    }
+    return { messageId: response.data.id, threadId: response.data.threadId || null, from: address }
+  })
 }
 
 const escapeHtml = (s: string) =>

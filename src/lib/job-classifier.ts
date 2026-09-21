@@ -96,13 +96,26 @@ interface JobText {
 /** "React Native" is its own track, so hide it from the plain-React check. */
 const withoutReactNative = (s: string) => s.replace(/react[\s-]native/gi, ' rn ')
 
+/** Titles that name a job but not a stack ("Senior Developer", "Full Stack Engineer"): tags/description then decide. */
+const GENERIC_TITLE = /(^|[^a-z])(developer|engineer|programmer|architect|lead|specialist|full[s-]?stack|front[s-]?end|web)([^a-z]|$)/i
+
+/**
+ * The job TITLE decides the role. Boards stuff tag lists ("react, flutter, python, php, ...")
+ * on every posting, so tags alone must never make a Data Scientist or PHP job look like a React job:
+ *  1. the title names a stack ("Senior React Developer")            -> those tracks, tags ignored;
+ *  2. the title is generic ("Full Stack Engineer", "Developer")     -> tags/description may decide,
+ *     but only if the tags point at <= 2 stacks AND the description also mentions them;
+ *  3. anything else                                                   -> not classified.
+ */
 export function classifyJob(job: JobText): JobClassification {
   const title = job.title.toLowerCase()
   const tags = (job.tags || []).join(' ').toLowerCase()
   const body = (job.description || '').toLowerCase().slice(0, 2500)
 
   const scores = new Map<TrackId, number>()
-  const headlineTracks = new Set<TrackId>()
+  const titleTracks = new Set<TrackId>()
+  const tagTracks: Array<{ id: TrackId; bodyHits: number }> = []
+  const weakBackedTracks = new Set<TrackId>()
 
   for (const track of TRACKS) {
     const t = track.id === 'react_js' ? withoutReactNative(title) : title
@@ -112,14 +125,21 @@ export function classifyJob(job: JobText): JobClassification {
     const titleHits = [...track.strong, ...(track.titleOnly || [])].filter((term) => hasTerm(t, term)).length
     const tagHits = track.strong.filter((term) => hasTerm(g, term)).length
     const bodyHits = track.strong.filter((term) => hasTerm(b, term)).length
+    const weakInTitle = (track.weak || []).some((term) => hasTerm(t, term))
 
-    // Generic words ("frontend", "full stack") only count if the body backs them up.
-    const weakInHeadline = (track.weak || []).some((term) => hasTerm(t, term) || hasTerm(g, term))
-    const weakBacked = weakInHeadline && bodyHits > 0
-
-    const score = titleHits * 5 + tagHits * 3 + Math.min(bodyHits, 4) + (weakBacked ? 3 : 0)
+    const score = titleHits * 5 + tagHits * 2 + Math.min(bodyHits, 4) + (weakInTitle && bodyHits > 0 ? 3 : 0)
     if (score > 0) scores.set(track.id, score)
-    if (titleHits > 0 || tagHits > 0 || weakBacked) headlineTracks.add(track.id)
+    if (titleHits > 0) titleTracks.add(track.id)
+    if (tagHits > 0) tagTracks.push({ id: track.id, bodyHits })
+    if (weakInTitle && bodyHits > 0) weakBackedTracks.add(track.id)
+  }
+
+  const headlineTracks = new Set<TrackId>()
+  if (titleTracks.size > 0) {
+    titleTracks.forEach((id) => headlineTracks.add(id))
+  } else if (GENERIC_TITLE.test(title)) {
+    weakBackedTracks.forEach((id) => headlineTracks.add(id))
+    if (tagTracks.length <= 2) tagTracks.filter((tt) => tt.bodyHits >= 1).forEach((tt) => headlineTracks.add(tt.id))
   }
 
   const ranked = Array.from(scores.entries()).sort((a, b) => b[1] - a[1])

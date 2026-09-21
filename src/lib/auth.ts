@@ -27,7 +27,10 @@ if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_APP_URL && 
   console.error(`[auth] NEXTAUTH_URL (${process.env.NEXTAUTH_URL}) differs from NEXT_PUBLIC_APP_URL (${process.env.NEXT_PUBLIC_APP_URL}); the OAuth state cookie will not match.`)
 }
 
-const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send'
+// gmail.send = send applications from the user's own mailbox; gmail.readonly = read job-related
+// replies. Both are needed, and the Gmail API must also be ENABLED in the Google Cloud project
+// (APIs & Services -> Library -> Gmail API). Boot detects and reports when it is not.
+export const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send'
 
 /**
  * Exchange the refresh token for a new access token. Google does not rotate
@@ -92,6 +95,9 @@ export async function persistGoogleAccount(
       id_token: account.id_token ?? null,
       ...(account.refresh_token ? { refresh_token: account.refresh_token } : {}),
       disconnectedAt: null,
+      // A fresh sign-in (maybe after enabling the Gmail API / granting scopes): re-verify Gmail.
+      gmailStatus: null,
+      gmailStatusMessage: null,
     }
     await prisma.account.upsert({
       where: { provider_providerAccountId: { provider: 'google', providerAccountId: account.providerAccountId } },
@@ -129,6 +135,8 @@ export const authOptions: NextAuthOptions = {
         params: {
           prompt: 'consent',
           access_type: 'offline',
+          // Keep previously granted Gmail permissions when the user signs in again.
+          include_granted_scopes: 'true',
           scope: GOOGLE_SCOPE,
         },
       },

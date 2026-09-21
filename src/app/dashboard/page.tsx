@@ -3,6 +3,7 @@
 import { useSession, signIn, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { useGmailConnection } from '@/hooks/useGmailConnection'
+import { GmailIssueBanner, type GmailIssue } from './GmailIssueBanner'
 import { useCachedFetch } from '@/hooks/useCachedFetch'
 
 interface DashboardStats {
@@ -52,6 +53,7 @@ interface UserProfile {
   portfolioUrl: string | null
   gmailEmail: string | null
   preferencesConfirmed?: boolean
+  gmailIssue?: GmailIssue | null
   skills: string[]
   preferredRoles: string[]
 }
@@ -165,6 +167,9 @@ export default function Dashboard() {
       {/* Main Content */}
       <div className="flex-1 overflow-auto">
         <div className="p-8">
+          {userProfile?.gmailIssue && (
+            <GmailIssueBanner issue={userProfile.gmailIssue} onResolved={reload} />
+          )}
           {userProfile && !userProfile.preferencesConfirmed && (
             <div className="mb-8 bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-center justify-between">
               <p className="text-blue-900">Upload your CV and confirm your skills to start finding and tracking jobs.</p>

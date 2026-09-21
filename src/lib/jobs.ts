@@ -39,17 +39,19 @@ const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi
 const BAD_EMAIL = /^(no-?reply|donotreply|do-not-reply|privacy|abuse|support-noreply)@|@(example|sentry|domain|email)\./i
 
 const RECRUITING_MAILBOX = /^(jobs?|careers?|hr|recruit(ing|ment|er|ers)?|talent|hiring|apply|applications?|cv|resume|people|work|join)$/i
-const APPLY_CONTEXT = /(apply|send|e-?mail|mail|submit|forward|cv|resume|résumé|application)[^\n@]{0,120}?([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi
+// Mailboxes that are never a hiring inbox unless the posting explicitly says "send your CV to ...".
+const GENERIC_MAILBOX = /^(support|help|info|contact|hello|sales|press|media|billing|legal|security|admin|webmaster|marketing|office|team|service|customer[a-z.-]*)$/i
+const APPLY_CONTEXT = /(apply|applications?|send|submit|forward|cv|resume|résumé|e-?mail(?:ing)?\s+(?:your|us|a\b|the\b|it\b))[^\n@]{0,120}?([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi
 
 /**
  * A recruiter/apply address from the posting, or undefined. Deliberately strict —
  * a wrong address means Boot emails a stranger — so an address only counts when it is
  *  1. named in an "apply / send your CV to ..." sentence, or
- *  2. a recruiting mailbox (jobs@, careers@, hr@, ...), or
- *  3. on the company's own domain.
- * Random addresses elsewhere in the text (support@, press@, a founder's email) are ignored.
+ *  2. a recruiting mailbox (jobs@, careers@, hr@, talent@ ...).
+ * Any other address in the text (support@, press@, a founder's or employee's address, one that
+ * merely shares the company's domain) is ignored.
  */
-export function extractApplyEmail(text: string, company = ''): string | undefined {
+export function extractApplyEmail(text: string, _company = ''): string | undefined {
   const all = Array.from(new Set((text.match(EMAIL_RE) || []).map((m) => m.toLowerCase()))).filter((m) => !BAD_EMAIL.test(m))
   if (all.length === 0) return undefined
 
@@ -57,12 +59,17 @@ export function extractApplyEmail(text: string, company = ''): string | undefine
     const e = m[2].toLowerCase()
     if (!BAD_EMAIL.test(e)) return e
   }
-  const mailbox = all.find((e) => RECRUITING_MAILBOX.test(e.split('@')[0]))
+  const implicit = all.filter((e) => !GENERIC_MAILBOX.test(e.split('@')[0]))
+  const mailbox = implicit.find((e) => RECRUITING_MAILBOX.test(e.split('@')[0]))
   if (mailbox) return mailbox
-  const token = company.toLowerCase().replace(/\b(inc|llc|ltd|gmbh|corp|co|limited|the)\b\.?/g, '').replace(/[^a-z0-9]/g, '')
-  if (token.length >= 3) {
-    const own = all.find((e) => e.split('@')[1].replace(/[^a-z0-9]/g, '').includes(token))
-    if (own) return own
+  return undefined
+}
+
+/** An employer/ATS application link inside the posting (checked on the raw HTML, so href="..." links count). */
+export function extractAtsUrl(html: string): string | undefined {
+  for (const m of html.matchAll(/https?:\/\/[^\s"'<>)\]]+/gi)) {
+    const url = m[0].replace(/[.,;:!?]+$/, '')
+    if (ATS_HOSTS.some(([re, name]) => re.test(url) && name !== 'linkedin' && name !== 'indeed')) return url
   }
   return undefined
 }
@@ -129,6 +136,7 @@ async function fromRemotive(keyword: string): Promise<FoundJob[]> {
       description: description.slice(0, 6000),
       url: j.url,
       applyEmail: extractApplyEmail(description, j.company_name || j.company || ''),
+      applyUrl: extractAtsUrl(j.description || ''),
       source: 'remotive',
       salary: j.salary || undefined,
       jobType: j.job_type || undefined,
@@ -151,6 +159,7 @@ async function fromArbeitnow(keyword: string): Promise<FoundJob[]> {
         description: description.slice(0, 6000),
         url: j.url,
         applyEmail: extractApplyEmail(description, j.company_name || j.company || ''),
+      applyUrl: extractAtsUrl(j.description || ''),
         source: 'arbeitnow',
         jobType: (j.job_types || []).join(', ') || undefined,
         tags: j.tags || [],
@@ -172,7 +181,7 @@ async function fromRemoteOk(keyword: string): Promise<FoundJob[]> {
         description: description.slice(0, 6000),
         url: j.url,
         applyEmail: extractApplyEmail(description, j.company_name || j.company || ''),
-        applyUrl: j.apply_url || undefined,
+        applyUrl: j.apply_url || extractAtsUrl(j.description || ''),
         source: 'remoteok',
         salary: j.salary_min ? `$${j.salary_min}–$${j.salary_max}` : undefined,
         tags: j.tags || [],

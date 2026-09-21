@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useCachedFetch } from '@/hooks/useCachedFetch'
+import { TRACK_LABEL } from '@/lib/job-classifier'
 
 interface Job {
   id: string
@@ -10,11 +11,27 @@ interface Job {
   location?: string | null
   url: string
   applyEmail?: string | null
+  applyUrl?: string | null
+  applyMethod?: string | null
+  applyChannel?: string | null
+  roleCategory?: string | null
+  technologies?: string | null
+  applyError?: string | null
   source: string
   matchScore?: number | null
   applied: boolean
   status: string
   foundAt: string
+}
+
+function parseTech(value?: string | null): string[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
 }
 
 export default function JobsPage() {
@@ -150,12 +167,26 @@ export default function JobsPage() {
                   <h3 className="text-lg font-semibold text-gray-900">{job.title}</h3>
                   <p className="text-gray-600">{job.company}</p>
                   {job.location && <p className="text-sm text-gray-500">📍 {job.location}</p>}
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {job.roleCategory && job.roleCategory !== 'other' && (
+                      <span className="px-2 py-0.5 bg-blue-100 text-blue-900 text-xs rounded">{TRACK_LABEL[job.roleCategory] || job.roleCategory}</span>
+                    )}
+                    {parseTech(job.technologies).map((t) => (
+                      <span key={t} className="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded">{t}</span>
+                    ))}
+                  </div>
                 </div>
                 <div className="text-right">
                   <span className="px-3 py-1 bg-gray-200 text-gray-800 text-sm rounded">{job.source}</span>
                   {job.matchScore != null && <p className="text-sm font-semibold mt-2">{job.matchScore}% match</p>}
                 </div>
               </div>
+
+              {!job.applied && job.applyError && (
+                <p className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                  Not sent — {job.applyError}
+                </p>
+              )}
 
               <div className="flex flex-wrap gap-3 items-center">
                 <a href={job.url} target="_blank" rel="noopener noreferrer" className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded">
@@ -172,10 +203,18 @@ export default function JobsPage() {
                         className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400"
                         title={`Sends from your Gmail to ${job.applyEmail}`}
                       >
-                        {busyId === job.id ? 'Sending…' : `Email application`}
+                        {busyId === job.id ? 'Sending…' : job.applyError ? 'Retry email application' : 'Email application'}
                       </button>
                     ) : (
-                      <span className="text-sm text-gray-500">No application email in posting</span>
+                      <a
+                        href={job.applyUrl || job.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                        title="Boot cannot submit this form for you: apply there, then mark it as applied."
+                      >
+                        Apply on {job.applyChannel && job.applyChannel !== 'email' ? job.applyChannel : 'employer site'} ↗
+                      </a>
                     )}
                     <button
                       onClick={() => handleApply(job, 'manual')}

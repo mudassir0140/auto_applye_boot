@@ -16,6 +16,7 @@ interface JobEmail {
 
 const EMAIL_TYPE_COLORS = {
   confirmation: 'bg-blue-100 text-blue-900',
+  bounce: 'bg-orange-100 text-orange-900',
   interview: 'bg-green-100 text-green-900',
   assessment: 'bg-yellow-100 text-yellow-900',
   rejection: 'bg-red-100 text-red-900',

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentUserWithGoogle, unauthorized, parseJsonList } from '@/lib/session'
-import { isGmailConnected } from '@/lib/gmail'
+import { isGmailConnected, gmailIssueFrom } from '@/lib/gmail'
 import { databaseErrorResponse } from '@/lib/db-error'
 
 export const dynamic = 'force-dynamic'
@@ -99,6 +99,8 @@ export async function GET() {
         image: user.image,
         preferencesConfirmed: !!user.preferencesConfirmedAt,
         needsGmailReconnect: !!googleAccount && !gmailConnected,
+        // Why Gmail is not working (Gmail API disabled in Google Cloud / permission not granted), if it is not.
+        gmailIssue: gmailConnected ? gmailIssueFrom(googleAccount) : null,
         skills: parseJsonList(user.skills),
         preferredRoles: parseJsonList(user.preferredRoles),
       },
