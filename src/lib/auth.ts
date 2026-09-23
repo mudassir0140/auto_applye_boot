@@ -7,6 +7,7 @@ import { prisma } from './prisma'
 const clientId = process.env.GOOGLE_CLIENT_ID
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET
 const secret = process.env.NEXTAUTH_SECRET
+const nextAuthUrl = process.env.NEXTAUTH_URL
 
 // Logged, never thrown: this module is imported by the root layout AND by every API
 // route (directly or via src/lib/session.ts), so throwing here took the ENTIRE site
@@ -14,6 +15,16 @@ const secret = process.env.NEXTAUTH_SECRET
 // missing env var, instead of just failing sign-in. NextAuth itself already degrades
 // gracefully without a secret (its own "Configuration" error on the pages that need
 // one), which is the behavior we want here too.
+
+// Diagnostic logging in production to help debug "Configuration" errors
+if (process.env.NODE_ENV === 'production') {
+  const hasSecret = !!secret
+  const hasClientId = !!clientId && clientId !== 'your-google-client-id-here'
+  const hasClientSecret = !!clientSecret && clientSecret !== 'your-google-client-secret-here'
+  const hasUrl = !!nextAuthUrl
+  console.log(`[auth] Production config check: secret=${hasSecret} clientId=${hasClientId} clientSecret=${hasClientSecret} url=${hasUrl}`)
+}
+
 if (!secret) {
   const instructions = process.env.NODE_ENV === 'production'
     ? 'Set NEXTAUTH_SECRET in your Vercel project environment variables (Production environment included)'
@@ -26,6 +37,9 @@ if (!clientId || clientId === 'your-google-client-id-here') {
 }
 if (!clientSecret || clientSecret === 'your-google-client-secret-here') {
   console.error('[auth] GOOGLE_CLIENT_SECRET is missing or still a placeholder — sign-in will fail')
+}
+if (!nextAuthUrl) {
+  console.error('[auth] NEXTAUTH_URL is not set — OAuth callbacks will fail')
 }
 
 if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_APP_URL && process.env.NEXTAUTH_URL && process.env.NEXTAUTH_URL !== process.env.NEXT_PUBLIC_APP_URL) {
