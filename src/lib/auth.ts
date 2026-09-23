@@ -8,13 +8,17 @@ const clientId = process.env.GOOGLE_CLIENT_ID
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET
 const secret = process.env.NEXTAUTH_SECRET
 
-// Not enforced while `next build` collects page data (the root layout imports this module);
-// the check still runs whenever the server actually starts.
-if (!secret && process.env.NEXT_PHASE !== 'phase-production-build') {
+// Logged, never thrown: this module is imported by the root layout AND by every API
+// route (directly or via src/lib/session.ts), so throwing here took the ENTIRE site
+// down — every page and every route, including ones needing no auth at all — on one
+// missing env var, instead of just failing sign-in. NextAuth itself already degrades
+// gracefully without a secret (its own "Configuration" error on the pages that need
+// one), which is the behavior we want here too.
+if (!secret) {
   const instructions = process.env.NODE_ENV === 'production'
-    ? 'Set NEXTAUTH_SECRET in your Vercel project environment variables'
+    ? 'Set NEXTAUTH_SECRET in your Vercel project environment variables (Production environment included)'
     : 'Set NEXTAUTH_SECRET in .env.local'
-  throw new Error(`NextAuth Configuration Error: NEXTAUTH_SECRET is not set. ${instructions}`)
+  console.error(`[auth] NEXTAUTH_SECRET is not set — sign-in will fail. ${instructions}`)
 }
 
 if (!clientId || clientId === 'your-google-client-id-here') {

@@ -58,9 +58,21 @@ NEXTAUTH_URL = https://yourdomain.vercel.app
 GOOGLE_CLIENT_ID = <your-google-client-id>
 GOOGLE_CLIENT_SECRET = <your-google-client-secret>
 DATABASE_URL = file:./prisma/dev.db
-NODE_ENV = production
 NEXT_PUBLIC_APP_URL = https://yourdomain.vercel.app
 ```
+
+Add every one of these for the **Production** environment specifically (Vercel scopes
+variables per environment — Production / Preview / Development — and a value saved only
+under Preview or Development is invisible to the live site). A blank or missing
+`NEXTAUTH_SECRET` under Production is the most common cause of a production-only
+"Configuration" sign-in error and 500s across the whole site.
+
+**Do NOT add a `NODE_ENV` variable.** Vercel sets it automatically (`production` for
+every build and every deployed function; it never runs `next dev` in the cloud). A
+project-level `NODE_ENV` added here — especially `development`, copied by mistake from a
+local `.env.local` — makes Next.js mix its development and production renderers in the
+same process, which crashes **every** route, including ones with no application code on
+the stack, such as a plain `/favicon.ico` request. If one exists, remove it and redeploy.
 
 ### Generate NEXTAUTH_SECRET
 
