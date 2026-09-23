@@ -50,7 +50,10 @@ The project already has `vercel.json` configured. Verify it looks correct:
 
 In the Vercel dashboard project settings:
 
-**Environment Variables Section**, add:
+**Environment Variables Section**, add one of the following two sets (this app runs
+next-auth v4, and current Vercel guides show Auth.js v5 naming; both work):
+
+**Option A: next-auth v4 naming (NEXTAUTH_* / GOOGLE_CLIENT_*)**
 
 ```
 NEXTAUTH_SECRET = <generate-random-32-hex-string>
@@ -61,11 +64,25 @@ DATABASE_URL = file:./prisma/dev.db
 NEXT_PUBLIC_APP_URL = https://yourdomain.vercel.app
 ```
 
+**Option B: Auth.js v5 naming (AUTH_* / AUTH_GOOGLE_*)**
+
+```
+AUTH_SECRET = <generate-random-32-hex-string>
+AUTH_URL = https://yourdomain.vercel.app
+AUTH_GOOGLE_ID = <your-google-client-id>
+AUTH_GOOGLE_SECRET = <your-google-client-secret>
+DATABASE_URL = file:./prisma/dev.db
+NEXT_PUBLIC_APP_URL = https://yourdomain.vercel.app
+```
+
 Add every one of these for the **Production** environment specifically (Vercel scopes
 variables per environment — Production / Preview / Development — and a value saved only
-under Preview or Development is invisible to the live site). A blank or missing
-`NEXTAUTH_SECRET` under Production is the most common cause of a production-only
-"Configuration" sign-in error and 500s across the whole site.
+under Preview or Development is invisible to the live site). A blank or missing auth
+secret under Production is the most common cause of a production-only
+"Configuration" sign-in error and 500s on all /api/auth/* routes.
+
+The app supports both naming conventions; if you set the v5 names and the v4 names are
+missing, they will be automatically aliased. If both are present, v4 names win.
 
 **Do NOT add a `NODE_ENV` variable.** Vercel sets it automatically (`production` for
 every build and every deployed function; it never runs `next dev` in the cloud). A
