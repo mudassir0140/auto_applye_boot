@@ -10,6 +10,22 @@
 // (so next-auth falls back to its own detection from VERCEL_URL / request headers),
 // and never invent a localhost URL for production.
 
+// This app runs next-auth v4, which reads NEXTAUTH_URL / NEXTAUTH_SECRET (and
+// GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET for the Google provider). Auth.js v5
+// renamed these to AUTH_URL / AUTH_SECRET / AUTH_GOOGLE_ID / AUTH_GOOGLE_SECRET,
+// and that naming is what current NextAuth/Vercel setup guides show — a variable
+// saved under the v5 name is invisible to this v4 app and looks identical to it
+// simply being unset ("There is a problem with the server configuration" on every
+// /api/auth/* route). Fill in the v4 name from its v5 alias when only the alias
+// is set, so either naming works; the v4 name always wins when both are present.
+function alias(v4: string, v5: string): void {
+  if (!process.env[v4] && process.env[v5]) process.env[v4] = process.env[v5]
+}
+alias('NEXTAUTH_URL', 'AUTH_URL')
+alias('NEXTAUTH_SECRET', 'AUTH_SECRET')
+alias('GOOGLE_CLIENT_ID', 'AUTH_GOOGLE_ID')
+alias('GOOGLE_CLIENT_SECRET', 'AUTH_GOOGLE_SECRET')
+
 function normalise(name: string): void {
   const raw = process.env[name]
   if (raw === undefined) return
