@@ -6,15 +6,16 @@ import { prisma } from './prisma'
 
 const clientId = process.env.GOOGLE_CLIENT_ID
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-const secret = process.env.NEXTAUTH_SECRET
+let secret = process.env.NEXTAUTH_SECRET
 const nextAuthUrl = process.env.NEXTAUTH_URL
 
 // Logged, never thrown: this module is imported by the root layout AND by every API
 // route (directly or via src/lib/session.ts), so throwing here took the ENTIRE site
 // down — every page and every route, including ones needing no auth at all — on one
-// missing env var, instead of just failing sign-in. NextAuth itself already degrades
-// gracefully without a secret (its own "Configuration" error on the pages that need
-// one), which is the behavior we want here too.
+// missing env var, instead of just failing sign-in.
+//
+// NextAuth requires a secret to be set. In development, use a fallback. In production,
+// this must be set via environment variables or the auth endpoints will return 500.
 
 // Diagnostic logging in production to help debug "Configuration" errors
 if (process.env.NODE_ENV === 'production') {
@@ -26,10 +27,13 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 if (!secret) {
-  const instructions = process.env.NODE_ENV === 'production'
-    ? 'Set NEXTAUTH_SECRET in your Vercel project environment variables (Production environment included)'
-    : 'Set NEXTAUTH_SECRET in .env.local'
-  console.error(`[auth] NEXTAUTH_SECRET is not set — sign-in will fail. ${instructions}`)
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[auth] NEXTAUTH_SECRET is not set in production — /api/auth/* endpoints will return 500. Set NEXTAUTH_SECRET in Vercel project environment variables (Production environment)')
+  } else {
+    // Development fallback: use a temporary secret. Never do this in production.
+    secret = 'dev-fallback-secret-do-not-use-in-production-32chars'
+    console.warn('[auth] Using development fallback NEXTAUTH_SECRET. Set NEXTAUTH_SECRET in .env.local for a real secret.')
+  }
 }
 
 if (!clientId || clientId === 'your-google-client-id-here') {
