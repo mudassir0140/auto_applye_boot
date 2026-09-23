@@ -15,5 +15,8 @@ export async function POST(req: NextRequest) {
   if (!result.ok) {
     return NextResponse.json({ ...result, error: result.message }, { status: httpStatusForApplyFailure(result.code) })
   }
-  return NextResponse.json({ ...result, message: `Application email sent to ${result.sentTo}` })
+  return NextResponse.json({
+    ...result,
+    message: `Application email sent from ${result.sentFrom} to ${result.sentTo}`,
+  })
 }

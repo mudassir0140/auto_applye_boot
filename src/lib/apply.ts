@@ -33,7 +33,7 @@ export type ApplyFailureCode =
   | 'not_found'
 
 export type ApplyResult =
-  | { ok: true; applicationId: string; method: 'auto' | 'manual'; sentTo?: string }
+  | { ok: true; applicationId: string; method: 'auto' | 'manual'; sentTo?: string; sentFrom?: string }
   | { ok: false; code: ApplyFailureCode; message: string; cooldownExpiresAt?: Date; daysRemaining?: number }
 
 export function httpStatusForApplyFailure(code: ApplyFailureCode): number {
@@ -82,6 +82,10 @@ export async function applyToJob(
     return { ok: false, code: 'no_recipient', message: 'This posting has no application email. Apply on the employer site, then mark it as applied.' }
   }
 
+  if (opts.method === 'email' && recipient && recipient.toLowerCase() === user.email.toLowerCase()) {
+    return { ok: false, code: 'no_recipient', message: 'Cannot send application to your own email address.' }
+  }
+
   if (opts.method === 'email') {
     const account = await getGoogleAccount(user.id)
     if (!isGmailConnected(account)) {
@@ -121,6 +125,7 @@ export async function applyToJob(
     return { ok: false, code: 'already_applied', message: 'You already applied to this job.' }
   }
 
+  let senderEmail: string | undefined
   if (opts.method === 'email' && recipient) {
     try {
       const cv = await prisma.resumeFile.findFirst({ where: { userId: user.id }, orderBy: { createdAt: 'desc' } })
@@ -139,6 +144,12 @@ export async function applyToJob(
       if (cv) content.attachment = { fileName: cv.fileName, contentType: cv.contentType, data: Buffer.from(cv.data) }
 
       const sent = await sendApplicationEmail(user.id, content, user.name)
+      senderEmail = sent.from
+
+      // Verify the sender is the authenticated user's email to prevent accidental sends from shared/admin accounts
+      if (sent.from.toLowerCase() !== user.email.toLowerCase()) {
+        throw new Error(`Email was sent from ${sent.from}, not your registered email ${user.email}. This should not happen — contact support.`)
+      }
 
       // The email IS sent at this point. If saving the record fails we must NOT roll the
       // application back (it would be re-sent later); log it and carry on.
@@ -210,5 +221,5 @@ export async function applyToJob(
     },
   })
 
-  return { ok: true, applicationId: application.id, method, sentTo: recipient ?? undefined }
+  return { ok: true, applicationId: application.id, method, sentTo: recipient ?? undefined, sentFrom: senderEmail }
 }
